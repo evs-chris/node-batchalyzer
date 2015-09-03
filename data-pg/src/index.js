@@ -52,7 +52,7 @@ module.exports = function(cfg) {
 
           if (next) {
             Promise.resolve(true).then(() => {
-              next.cb();
+              return next.cb();
             }).then(
               v => next.ok(v),
               err => next.fail(err)
@@ -94,9 +94,8 @@ module.exports = function(cfg) {
         // get list of all active orders by schedule
         activeSchedules() {
           return dao.schedules.query(
-            `select @s.*, @jobs.*, @entry.*, @job.*
-            from @${prefix}schedules s left join @${prefix}orders jobs on jobs.schedule_id = s.id join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id
-            where s.active = true`,
+            `with stuff as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id)
+            select s.*, stuff.* from ${prefix}schedules s left join stuff on stuff.@:jobs.schedule_id = s.id where s.active = true`,
             { fetch: { jobs: [{ entry: { job: '' } }] } }
           );
         },
@@ -175,17 +174,17 @@ module.exports = function(cfg) {
           return lockResources(() => {
             return db.transaction(function*(t) {
               let out = {};
-              for (let i = 0; i < rs.length; i++) {
-                let { name, count } = rs[i];
-                let r = yield dao.resources.findOne('name = ?', { t });
-                if (!r) throw new Error('Resource not found');
+              for (let name in rs) {
+                let count = rs[name];
+                let r = yield dao.resources.findOne('name = ?', name, { t });
+                if (!r) throw new Error(`Resource not found: ${name}`);
 
                 if (r.type === 0) {
-                  if (r.used < r.total && (r.total - r.used - count) > 0) {
+                  if (r.used < r.total && (r.total - r.used - count) >= 0) {
                     r.used += count;
                     yield dao.resources.update(r, { t });
                     out[name] = r;
-                  } else return false;
+                  } else throw new Error(`Resource not available: ${name}`);
                 } else if (r.type === 1) {
                   let now = Math.floor(new Date().getTime() / 1000), min = now - 60;
 
@@ -195,7 +194,7 @@ module.exports = function(cfg) {
 
                   if (r.rate.length < r.maxPerMinute) {
                     r.rate.push(now);
-                  }
+                  } else throw new Error(`Resource limit reached: ${name}`);
 
                   yield dao.resources.save(r, { t } );
                   out[name] = r;
@@ -213,17 +212,24 @@ module.exports = function(cfg) {
             });
           });
         },
-        releaseResources(rs) {
+        releaseResources(rs, map) {
           return lockResources(() => {
             return db.transaction(function*(t) {
-              for (let i = 0; i < rs.length; i++) {
-                let { name, count } = rs;
+              let out = {};
+
+              for (let name in rs) {
+                let count = rs[name];
                 let r = yield dao.resources.findOne('name = ?', name);
                 if (r.type === 0) {
                   r.used -= count;
                   if (r.used < 0) r.used = 0;
+                  out[name] = r;
                   yield dao.resources.update(r);
                 }
+              }
+
+              if (map) {
+                for (let k in rs) map[k] = out[k];
               }
 
               return true;

@@ -2,6 +2,7 @@
 
 var { isEmptyObject, zeroDate, nextTime, addTime, deepAssign, rand } = require('./util');
 var prefix = 'batchalyzer';
+var agentRE = /\$AGENT/g;
 
 module.exports = function(cfg, log) {
   let pumpMax = cfg.get(`${prefix}.maxScheduleWaitSeconds`, 600);
@@ -85,13 +86,12 @@ module.exports = function(cfg, log) {
       // TODO: message manipulation
 
       return next.then(() => {
-        let resources = [];
-        if (job.entry && job.entry.config.resources) {
-          for (let k in job.entry.config.resources) {
-            let r = job.entry.config.resources[k];
-            let name = r.name;
-            if (r.local) name = `${agent.name} ${r.name}`;
-            resources.push({ name, count: r.count });
+        let resources = {};
+        if (job.config.resources) {
+          for (let k in job.config.resources) {
+            let kk = k.replace(agentRE, agent.name);
+            if (kk in resources) resources[kk] += job.config.resources[k];
+            else resources[kk] = job.config.resources[k];
           }
         }
 
@@ -99,10 +99,17 @@ module.exports = function(cfg, log) {
           dao.releaseResources(resources),
           dao.jobComplete(job, job.status)
         ]).then(() => {
-          // TODO: check job config to see if failed jobs should be continued (default no)
           let s = schedules[job.scheduleId];
+
           if (s) {
-            let next = nextTime(zeroDate(), job, isEmptyObject(job.entry.schedule) ? job.entry.job.schedule : job.entry.schedule);
+            // make sure this job doesn't already have an order pending
+            for (let i = 0; i < s.jobs.length; i++) {
+              if (s.jobs[i].entryId === job.entryId && s.jobs[i].status < 0) {
+                return true;
+              }
+            }
+
+            let next = nextTime(zeroDate(), job, isEmptyObject(job.entry.schedule) ? (job.entry.job || {}).schedule : job.entry.schedule);
             if (next) {
               return dao.orderJob(job.entry, s).then(o => {
                 o.entry = job.entry;
@@ -113,7 +120,7 @@ module.exports = function(cfg, log) {
               });
             }
           }
-        }).then(() => pump(context));
+        }, err => log.job.error(`Failure during job complete`, err)).then(() => pump(context));
       });
     });
   }
@@ -155,7 +162,7 @@ module.exports = function(cfg, log) {
           if (j.status >= 0) continue; // skip non-pending orders
 
           if (!j.next) {
-            j.next = nextTime(zeroDate(), j, isEmptyObject(j.entry.schedule) ? j.entry.job.schedule : j.entry.schedule);
+            j.next = nextTime(zeroDate(), j, isEmptyObject(j.entry.schedule) ? (j.entry.job || {}).schedule : j.entry.schedule);
           }
           if (j.next) {
             if (j.next <= now) { //job is time eligible
@@ -192,6 +199,12 @@ module.exports = function(cfg, log) {
         if (!next) next = addTime(now, pumpMax);
         log.schedule.trace(`Scheduling next cycle for ${Math.floor((next - now) / 1000)}s`);
         nextCycle = setTimeout(() => last(context), next - now);
+      }, err => {
+        log.schedule.error(`Failed while acquiring resources`, err);
+        // schedule next pump - default to 10 minutes out if there is nothing to bump
+        if (!next) next = addTime(now, pumpMax);
+        log.schedule.trace(`Scheduling next cycle for ${Math.floor((next - now) / 1000)}s`);
+        nextCycle = setTimeout(() => last(context), next - now);
       });
     }
 
@@ -216,7 +229,6 @@ module.exports = function(cfg, log) {
     return last;
   })();
 
-  var agentRE = /\$AGENT/g;
   function acquireResources(context, queue) {
     let { agents, resources, dao } = context;
 
@@ -236,13 +248,16 @@ module.exports = function(cfg, log) {
           return _fireJob(context, j, as[rand(as.length - 1)]).then(next, next);
         }
 
-        if (!hasLocalResources(context, j)) {
+        if (!hasLocalResources(j)) {
           // TODO: check to see if resource acquisution is even a possibility
           let a = as[rand(as.length - 1)];
           // return random acquisition
           return dao.acquireResources(j.config.resources || {}, resources).then(() => {
             return _fireJob(context, j, a).then(next, next);
-          }, next);
+          }, err => {
+            log.job.info(`Failed to acquire resources for ${j.id}`);
+            return next();
+          });
         } else {
           // TODO: shuffle agents?
           let step = function step() {
@@ -250,14 +265,20 @@ module.exports = function(cfg, log) {
             if (a) {
               let l = j.config.resources || {}, res = {};
               for (let k in l) {
-                res[k.replace(agentRE, a.name)] = l[k];
+                let kk = k.replace(agentRE, a.name);
+                if (kk in res) res[kk] += l[k];
+                else res[kk] = l[k];
               }
               return dao.acquireResources(res, resources).then(() => {
                 return _fireJob(context, j, a).then(next, next);
-              }, step);
+              }, err => {
+                log.job.info(`Failed to acquire resources for ${j.id} on ${a.name}`);
+                return step();
+              });
             } else return next(); // couldn't find a suitable agent and acquire resources
             // TODO: send message?
           };
+          return step();
         }
       } else return Promise.resolve(true);
     }

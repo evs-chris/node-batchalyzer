@@ -83,7 +83,7 @@ module.exports = function(cfg) {
         dao.refreshResources().then(rs => {
           let res = {};
           for (let i = 0; i < rs.length; i++) {
-            res[rs[i]].name = rs[i];
+            res[rs[i].name] = rs[i];
           }
           context.resources = res;
           context.resourceLst = rs;
@@ -254,7 +254,7 @@ function newDay(context) {
       let orders = [], map = {};
       for (let i = 0; i < es.length; i++) {
         let e = es[i];
-        let next = nextTime(date, e, e.schedule || e.job.schedule);
+        let next = nextTime(date, e, e.schedule || (e.job || {}).schedule);
         if (next && (!e.lastRun || e.lastRun < next)) {
           orders.push({ entryId: e.id, next, status: -1 });
           map[e.id] = e;
@@ -295,10 +295,10 @@ function refreshSchedule(context, s) {
     outer: for (let i = 0; i < es.length; i++) {
       let e = es[i];
       for (let j = 0; j < s.jobs.length; j++) {
-        if (s.jobs[j].entryId === e.id) continue outer;
+        if (s.jobs[j].entryId === e.id && s.jobs[j].status < 0) continue outer;
       }
 
-      let time = nextTime(date, e, e.schedule || e.job.schedule);
+      let time = nextTime(date, e, e.schedule || (e.job || {}).schedule);
       if (time && (!e.lastRun || e.lastRun < time)) {
         orders.push({ entryId: e.id, next: time, status: -1, entry: e });
       }
