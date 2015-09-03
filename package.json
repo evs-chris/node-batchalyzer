@@ -1,0 +1,14 @@
+{
+  "name": "batchalyzer-build",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "server": "./server",
+    "data": "./data-pg",
+    "agent": "./agent"
+  },
+  "devDependencies": {
+    "gobble": "^0.10.2",
+    "gobble-babel": "^5.5.8"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+bower_components
+Gruntfile.js
+target
+components
+build
+.node_history
+npm-debug.log
+.gobble*/
+.giblets/
+client.old/
+NODE-APP.pid
+build.tar.gz
+server/src/app.js
+agent/src/app.js

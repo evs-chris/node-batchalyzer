@@ -1,0 +1,10 @@
+{
+  "name": "batchalyzer-data-pg",
+  "version": "0.0.1",
+  "dependencies": {
+    "pg.js": "^4",
+    "postgres-gen-dao": "^0",
+    "postgres-gen": "^0",
+    "postgres-gen-migrate": "^0"
+  }
+}

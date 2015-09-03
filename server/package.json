@@ -1,0 +1,9 @@
+{
+  "name": "batchalyzer",
+  "version": "0.0.1",
+  "dependencies": {
+    "ws": "^0",
+    "flapjacks": "^0",
+    "blue-ox": "^0"
+  }
+}
