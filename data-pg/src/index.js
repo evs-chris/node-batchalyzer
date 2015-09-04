@@ -92,12 +92,24 @@ module.exports = function(cfg) {
           });
         },
         // get list of all active orders by schedule
-        activeSchedules() {
-          return dao.schedules.query(
-            `with stuff as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id)
-            select s.*, stuff.* from ${prefix}schedules s left join stuff on stuff.@:jobs.schedule_id = s.id where s.active = true`,
-            { fetch: { jobs: [{ entry: { job: '' } }] } }
-          );
+        activeSchedules(opts = {}) {
+          if (!('allOrders' in opts) || opts.allOrders) {
+            return dao.schedules.query(
+              `with sched as (select @s.* from @${prefix}schedules s where s.active = true),
+              stuff as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched))
+              select sched.*, stuff.* from sched left join stuff on stuff.@:jobs.schedule_id = @:s.id where @:s.active = true`,
+              { fetch: { jobs: [{ entry: { job: '' } }] } }
+            );
+          } else {
+            return dao.schedules.query(
+              `with sched as (select @s.* from @${prefix}schedules s where s.active = true),
+              bits as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched) order by jobs.updated_at desc),
+              lasts as (select ROW_NUMBER() over(partition by @:jobs.entry_id) as rownum, bits.* from bits),
+              stuff as (select * from lasts where rownum = 1)
+              select sched.*, stuff.* from sched left join stuff on stuff.@:jobs.schedule_id = @:s.id where @:s.active = true`,
+              { fetch: { jobs: [{ entry: { job: '' } }] } }
+            );
+          }
         },
         findSchedule(date) {
           return dao.schedules.find('target >= ? and target <= ?', date, date);
@@ -119,6 +131,9 @@ module.exports = function(cfg) {
               { fetch: { jobs: [{ entry: { job: '' } }] }, t }
             ).then(ss => ss[0]);
           });
+        },
+        resources() {
+          return dao.resources.find();
         },
         // refresh resources - used once at startup
         refreshResources() {
@@ -330,18 +345,48 @@ module.exports = function(cfg) {
         // Message related methods
         // -----------------------
         // get active messages
-        messages(opts) {
+        messages(opts = {}) {
           if (opts.all) {
             return dao.messages.find('true = true order by updated_at desc limit ?', opts.limit || 100);
           } else {
             return dao.messages.find('status < 3');
           }
         },
-        // add a new message
-        postMessage(msg) {
-        },
-        //update message
-        changeMessage(id, who, status) {
+        // post/update message
+        message(opts = {}) {
+          return db.transaction(function*(t) {
+            let msg, audit = {}, count = 0;
+
+            if (opts.id) msg = (yield dao.messages.find('id = ?', opts.id))[0];
+            else if (opts.handle) msg = (yield dao.messages.find('status < 3 and handle = ?', opts.handle))[0];
+
+            // don't audit the message if it's the same
+            if (msg && opts.message === msg.message) delete opts.message;
+
+            // if the message is being resolved, but none is found, do nothing
+            if (!msg && opts.status >= 3) return true;
+
+            if (!msg && !opts.message) throw new Error('No message found and no message provided to post.');
+
+            if (!msg) msg = { message: opts.message, audit: [] };
+
+            if ('status' in opts) audit.status = msg.status = opts.status;
+            if ('message' in opts) msg.message = audit.message = opts.message;
+            if ('who' in opts) audit.who = opts.who;
+            if ('handle' in opts) msg.handle = opts.handle;
+
+            if ('agentId' in opts) msg.agentId = opts.agentId;
+            if ('statId' in opts) msg.statId = opts.statId;
+            if ('orderId' in opts) msg.orderId = opts.orderId;
+            if ('defer' in opts) audit.defer = msg.deferredUntil = opts.defer;
+            if ('extra' in opts) audit.extra = msg.extra = opts.extra;
+
+            // only audit if there is anything to post
+            for (let k in audit) count++;
+            if (count > 0) msg.audit.push(audit);
+
+            return yield dao.messages.upsert(msg);
+          });
         }
       };
 

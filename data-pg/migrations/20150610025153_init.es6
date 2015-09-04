@@ -127,6 +127,7 @@ create table ${prefix}messages (
   stat_id bigint references ${prefix}stats(id), -- a stat message
   order_id bigint references ${prefix}orders(id), -- a job message
   agent_id bigint references ${prefix}agents(id), -- an agent message
+  handle varchar,
   status integer not null default 0, -- 0 - new, 1 - acknowledged, 2 - deferred, 3 - resolved
   message varchar not null,
   extra json,

@@ -67,7 +67,12 @@ module.exports = function(cfg, log) {
       let state = checkValue(deepAssign({}, stat.definition.config, stat.config), data.value);
       dao.statEntry(stat, data.value, data.status, state);
 
-      // TODO: message manipulation
+      let msg = {
+        handle: `stat ${stat.id} state`,
+        message: `${stat.name} ${state === 0 ? 'OK' : state === 1 ? 'WARNING' : 'CRITICAL'}`
+      };
+      if (state === 0) msg.state = 3; // handle
+      dao.message(msg);
     });
   }
 

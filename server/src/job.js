@@ -83,6 +83,13 @@ module.exports = function(cfg, log) {
         if (changed) next = dao.updateSchedule(s);
       }
 
+      let msg = {
+        handle: `job ${job.entryId} state`,
+        message: `Job ${job.config.name || (job.entry.job || {}).name || job.id} ${job.status === 0 ? 'OK' : job.status === 1 ? 'FAILED' : job.status === 2 ? 'WARNING' : 'UNKOWN'}`
+      };
+      if (data.result === 0) msg.status = 3;
+      dao.message(msg);
+
       // TODO: message manipulation
 
       return next.then(() => {
@@ -109,7 +116,7 @@ module.exports = function(cfg, log) {
               }
             }
 
-            let next = nextTime(zeroDate(), job, isEmptyObject(job.entry.schedule) ? (job.entry.job || {}).schedule : job.entry.schedule);
+            let next = nextTime(s.target, job, isEmptyObject(job.entry.schedule) ? (job.entry.job || {}).schedule : job.entry.schedule);
             if (next) {
               return dao.orderJob(job.entry, s).then(o => {
                 o.entry = job.entry;

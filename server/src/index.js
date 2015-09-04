@@ -54,6 +54,7 @@ module.exports = function(cfg) {
     let port = config.get(`${prefix}.port`, 8080);
 
     let context = { dao, schedules: {}, agents: [], stats: [], findOrder, findStat, fireJob, fireStat, reload };
+    context.missingAfter = config.get(`${prefix}.agentMissingMinutes`, 5);
 
     function findOrder(id) { return _findOrder(context.schedules, dao, id); }
     function findStat(id) { return _findStat(context.stats, dao, id); }
@@ -65,7 +66,7 @@ module.exports = function(cfg) {
         initStats(context),
 
         // set up agents
-        dao.agents().then(as => {
+        dao.resetAgents().then(as => {
           let cur = context.agents;
           function findAgent(a) { for (let i = 0; i < cur.length; i++) if (cur[i].id === a.id) return cur[i]; }
           as.forEach(a => {
@@ -129,6 +130,12 @@ module.exports = function(cfg) {
         c.on('close', () => {
           clients.splice(clients.indexOf(c), 1);
           log.server.info('Lost a client, ' + c.id);
+          dao.agentStatus(c.agent, 0);
+          dao.message({
+            handle: `agent ${c.agent.id} missing`,
+            message: `Agent ${c.agent.name} is disconnected`,
+            agentId: c.agent.id
+          });
           c.agent.socket = undefined;
           c.agent = undefined;
         });
@@ -156,6 +163,8 @@ module.exports = function(cfg) {
               case 'heartbeat':
                 log.server.trace(`Got a heartbeat from ${c.id}`);
                 dao.agentStatus(c.agent, 1).then(noop, logError);
+                c.agent.lastSeen = new Date();
+                dao.message({ handle: `agent ${c.agent.id} missing`, status: 3 });
                 break;
 
               case 'info':
@@ -191,6 +200,14 @@ module.exports = function(cfg) {
           fire('info');
         });
       });
+
+      function missingCheck() {
+        context.nextMissingCheck = false;
+        missingAgents(context).then(null, err => {}).then(() => {
+          context.nextMissingCheck = setTimeout(missingCheck, context.missingAfter * 60000);
+        });
+      }
+      context.nextMissingCheck = setTimeout(missingCheck, context.missingAfter * 60000);
 
       pump(context);
 
@@ -323,12 +340,17 @@ function refreshSchedule(context, s) {
 
 function missingAgents(context) {
   let { dao } = context;
-  dao.agents({ missing: true }).then(as => {
-    dao.messages().then(ms => {
-      // TODO: message handling
-      // create messages for newly missing agents
-      // resolve messages for found agents
-    });
+  return dao.agents({ missing: true, minutes: context.missingAfter }).then(as => {
+    let queue = [];
+    for (let i = 0; i < as.length; i++) {
+      queue.push(dao.agentStatus(as[i], 2).then(() => {
+        return dao.message({
+          handle: `agent ${as[i].id} missing`,
+          message: `Agent ${as[i].name} has a stale connection`
+        });
+      }));
+    }
+    return Promise.all(queue);
   });
 }
 
