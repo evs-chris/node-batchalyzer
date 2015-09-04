@@ -13,3 +13,4 @@ NODE-APP.pid
 build.tar.gz
 server/src/app.js
 agent/src/app.js
+api/src/app.js
