@@ -20,7 +20,7 @@ function assign(dest, ...srcs) {
 function deepAssign(dest, ...srcs) {
   for (let i = 0; i < srcs.length; i++) {
     for (let k in srcs[i]) {
-      if (typeof srcs[i][k] === 'object') {
+      if (!Array.isArray(srcs[i][k]) && typeof srcs[i][k] === 'object') {
         if (srcs[i][k]) {
           dest[k] = deepAssign(dest[k] || {}, srcs[i][k]);
         }
@@ -34,7 +34,7 @@ function deepAssign(dest, ...srcs) {
 
 function nextTime(target, obj, schedule) {
   let now = new Date();
-  if (target > now) return; // not the right day
+  if (target > now || target.getDate() !== now.getDate()) return; // not the right day
 
   if (schedule.time) {
     let dt = new Date(schedule.time);

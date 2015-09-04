@@ -220,7 +220,7 @@ function getStat(context, data) {
     case 'fork':
       try {
         let args = [];
-        if (data.args) args.concat(data.args);
+        if (data.args) args = args.concat(data.args);
         p = child.fork(data.cmd, args, {
           cwd: data.path || os.tmpdir(),
           silent: true,
@@ -255,7 +255,7 @@ function getStat(context, data) {
     case 'shell':
       try {
         let args = [];
-        if (data.args) args.concat(data.args);
+        if (data.args) args = args.concat(data.args);
         p = child.spawn(data.cmd, args, {
           cwd: data.path || os.tmpdir(),
           stdio: ['pipe', 'pipe', 'ignore'],
@@ -317,7 +317,7 @@ function runJob(context, data) {
     // allow process to send certain things back to scheduler
     try {
       let args = [];
-      if (data.args) args.concat(data.args);
+      if (data.args) args = args.concat(data.args);
       let p = child.fork(data.cmd, args, {
         cwd: data.path || os.tmpdir(),
         silent: true,
@@ -354,7 +354,7 @@ function runJob(context, data) {
   } else if (data.type === 'shell') { // shell script or other executable
     try {
       let args = [];
-      if (data.args) args.concat(data.args);
+      if (data.args) args = args.concat(data.args);
       let p = child.spawn(data.cmd, args, {
         cwd: data.path || os.tmpdir(),
         stdio: 'pipe',
