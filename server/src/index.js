@@ -243,7 +243,7 @@ function setup(context, date) {
 
     if (cur === false) {
       return newDay(context).then(res => {
-        schedules[res.schedule.id] = res.schedule;
+        schedules[res.id] = res;
       });
     } else {
       return refreshSchedule(context, cur);
@@ -289,7 +289,7 @@ function newDay(context) {
         return s;
       });
     });
-  }).then(() => scheduleNewDay(context));
+  }).then(s => { scheduleNewDay(context); return s; });
 }
 
 // schedule the next newDay run if it isn't already scheduled
