@@ -3,13 +3,15 @@
 // TODO: allow server to provide scripts for client to run
 //  cache scripts and check cached version against target
 
-var child = require('child_process');
-var os = require('os');
+const child = require('child_process');
+const os = require('os');
+const sander = require('sander');
+const fspath = require('path');
 
-var ws = require('ws');
-var config = require('flapjacks').read({ name: 'batchalyzer-agent' });
-var prefix = 'batchalyzer.agent';
-var log = (function() {
+const WS = require('ws');
+const config = require('flapjacks').read({ name: 'batchalyzer-agent' });
+const prefix = 'batchalyzer.agent';
+const log = (function() {
   let pfx = config.get(`${prefix}.logPrefix`, '');
   let l = require('blue-ox');
   let general = l(pfx, 'trace');
@@ -19,6 +21,7 @@ var log = (function() {
   general.client = l(`${pfx}client`, 'trace');
   general.job = l(`${pfx}job`, 'trace');
   general.stat = l(`${pfx}stat`, 'trace');
+  general.command = l(`${pfx}command`, 'trace');
 
   return general;
 })();
@@ -27,7 +30,7 @@ module.exports = function(cfg) {
   if (cfg) config.merge(prefix, cfg);
   let shutdown = false, beat, socket, backoff = 0, connected = false;
   let messageQueue = [];
-  let context = { jobs: {} };
+  let context = { jobs: {}, commands: {}, commandPackets: {} };
   let drainInterval = config.get(`${prefix}.drainInterval`, 1000), heartbeatInterval = config.get(`${prefix}.heartbeat`, 50);
   let backoffStep = config.get(`${prefix}.backoffStep`, 30), backoffMax = config.get(`${prefix}.backoffMax`, 300);
   let backoffStart = config.get(`${prefix}.backoffStart`, 10);
@@ -39,11 +42,15 @@ module.exports = function(cfg) {
   context.runJobs = config.get(`${prefix}.runJobs`, true);
   context.runForkJobs = !context.runJobs ? false : config.get(`${prefix}.runForkJobs`, true);
   context.runShellJobs = !context.runJobs ? false : config.get(`${prefix}.runShellJobs`, true);
+  context.fetchCommands = config.get(`${prefix}.fetchCommands`, true);
+  context.fetchStatCommands = !context.fetchCommands ? false : config.get(`${prefix}.fetchStatCommands`, true);
+  context.fetchJobCommands = !context.fetchCommands ? false : config.get(`${prefix}.fetchJobCommands`, true);
   context.maxStatTime = config.get(`${prefix}.maxStatSeconds`, 30);
   context.outputChunk = config.get(`${prefix}.outputChunkBytes`, 8192);
+  context.commandPath = config.get(`${prefix}.commandPath`, 'commands');
 
   function connect() {
-    socket = new ws(config.get(`${prefix}.server`), {
+    socket = new WS(config.get(`${prefix}.server`), {
       headers: {
         Agent: config.get(`${prefix}.agent`),
         Key: config.get(`${prefix}.key`)
@@ -113,6 +120,15 @@ module.exports = function(cfg) {
               shellJobs: context.runShellJobs
             }
           });
+          break;
+
+        case 'command':
+          log.command.trace(`Got a command packet with ${!!context.commandPackets[data.data.name + '/' + data.data.version] ? 'a' : 'no'} callback.`, data.data);
+          let c = data.data, next = context.commandPackets[`${c.name}/${c.version}`];
+          if (next) {
+            if (c.error) next.fail(c.error);
+            else next.ok(c);
+          }
           break;
 
         default:
@@ -200,8 +216,8 @@ function getStat(context, data) {
   let p, timeout;
   log.stat.trace(`Got a stat request for ${data.type} ${data.cmd || 'builtin'}`);
 
-  if (!context.runStats) context.getFire()('stat', { id: data.id, type: data.type, error: 'Stats Not Supported' });
-  if (!context[(data.type === 'fork' ? 'runForkStats' : data.type === 'shell' ? 'runShellStats' : 'runBuiltinStats')]) context.getFire()('stat', { id: data.id, type: data.type, error: 'Stat Type Not Supported' });
+  if (!context.runStats) return context.getFire()('stat', { id: data.id, type: data.type, error: 'Stats Not Supported' });
+  if (!context[(data.type === 'fork' ? 'runForkStats' : data.type === 'shell' ? 'runShellStats' : 'runBuiltinStats')]) return context.getFire()('stat', { id: data.id, type: data.type, error: 'Stat Type Not Supported' });
 
   switch (data.type) {
     case 'mem':
@@ -218,88 +234,98 @@ function getStat(context, data) {
       break;
 
     case 'fork':
-      try {
-        let args = [];
-        if (data.args) args = args.concat(data.args);
-        p = child.fork(data.cmd, args, {
-          cwd: data.path || os.tmpdir(),
-          silent: true,
-          env: data.env || {}
-          // TODO: uid, gid
-        });
+      commandAvailable(context, data, true).then((cmd) => {
+        try {
+          let args = [];
+          if (data.args) args = args.concat(data.args);
+          p = child.fork(data.cmd, args, {
+            cwd: cmd.path || data.path || os.tmpdir(),
+            silent: true,
+            env: data.env || {}
+            // TODO: uid, gid
+          });
 
-        p.on('message', msg => {
+          p.on('message', msg => {
             log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} complete as ${msg.value}`);
-          context.getFire()('stat', { id: data.id, type: data.type, value: msg.value || 0, status: msg.status || '' });
-          p.disconnect();
-        });
-        p.send({ type: 'config', config: data.config || {} });
+            context.getFire()('stat', { id: data.id, type: data.type, value: msg.value || 0, status: msg.status || '' });
+            p.disconnect();
+          });
+          p.send({ type: 'config', config: data.config || {} });
 
-        p.on('exit', () => {
-          if (timeout) clearTimeout(timeout);
-        });
+          p.on('exit', () => {
+            if (timeout) clearTimeout(timeout);
+          });
 
-        if (!('limit' in data) || (typeof data.limit === 'number' && data.limit > -1)) {
-          timeout = setTimeout(() => {
-            p.kill();
-            log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} cancelled due to timeout`);
-            context.getFire()('stat', { error: 'timeout' });
-          }, (data.limit || context.maxStatTime) * 1000);
+          if (!('limit' in data) || (typeof data.limit === 'number' && data.limit > -1)) {
+            timeout = setTimeout(() => {
+              p.kill();
+              log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} cancelled due to timeout`);
+              context.getFire()('stat', { error: 'timeout' });
+            }, (data.limit || context.maxStatTime) * 1000);
+          }
+        } catch (e) {
+          log.stat.error(e);
+          context.getFire()('stat', { id: data.id, error: e.message });
         }
-      } catch (e) {
+      }, e => {
         log.stat.error(e);
         context.getFire()('stat', { id: data.id, error: e.message });
-      }
+      });
       break;
 
     case 'shell':
-      try {
-        let args = [];
-        if (data.args) args = args.concat(data.args);
-        p = child.spawn(data.cmd, args, {
-          cwd: data.path || os.tmpdir(),
-          stdio: ['pipe', 'pipe', 'ignore'],
-          env: data.env || {}
-          // TODO: uid, gid
-        });
-        let buffer = '', killed = false;
+      commandAvailable(context, data, true).then((cmd) => {
+        try {
+          let args = [];
+          if (data.args) args = args.concat(data.args);
+          p = child.spawn(data.cmd, args, {
+            cwd: cmd.path || data.path || os.tmpdir(),
+            stdio: ['pipe', 'pipe', 'ignore'],
+            env: data.env || {}
+            // TODO: uid, gid
+          });
+          let buffer = '', killed = false;
 
-        chunkStream(p.stdout, context.outputChunk, c => buffer += c);
+          chunkStream(p.stdout, context.outputChunk, c => buffer += c);
 
-        p.on('exit', () => {
-          if (!killed) {
-            let lines = buffer.split('\n');
-            if (lines.length < 1) {
-              context.getFire()('stat', { id: data.id, type: data.type, error: 'No result' });
-            } else {
-              let line = lines.pop(), value, status;
-              while (line === '') line = lines.pop();
-              if (line.indexOf(';') !== -1) {
-                [value, status] = line.split(';');
-                value = +value;
+          p.on('exit', () => {
+            if (!killed) {
+              let lines = buffer.split('\n');
+              if (lines.length < 1) {
+                context.getFire()('stat', { id: data.id, type: data.type, error: 'No result' });
               } else {
-                value = +line;
-                status = '';
+                let line = lines.pop(), value, status;
+                while (line === '') line = lines.pop();
+                if (line.indexOf(';') !== -1) {
+                  [value, status] = line.split(';');
+                  value = +value;
+                } else {
+                  value = +line;
+                  status = '';
+                }
+                log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} complete as ${value}`);
+                context.getFire()('stat', { id: data.id, type: data.type, value, status });
               }
-              log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} complete as ${value}`);
-              context.getFire()('stat', { id: data.id, type: data.type, value, status });
+              if (timeout) clearTimeout(timeout);
             }
-            if (timeout) clearTimeout(timeout);
-          }
-        });
+          });
 
-        if (!('limit' in data) || (typeof data.limit === 'number' && data.limit > -1)) {
-          timeout = setTimeout(() => {
-            killed = true;
-            p.kill();
-            log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} cancelled due to timeout`);
-            context.getFire()('stat', { error: 'timeout' });
-          }, (data.limit || context.maxStatTime) * 1000);
+          if (!('limit' in data) || (typeof data.limit === 'number' && data.limit > -1)) {
+            timeout = setTimeout(() => {
+              killed = true;
+              p.kill();
+              log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} cancelled due to timeout`);
+              context.getFire()('stat', { error: 'timeout' });
+            }, (data.limit || context.maxStatTime) * 1000);
+          }
+        } catch (e) {
+          log.stat.error(e);
+          context.getFire()('stat', { id: data.id, error: e.message });
         }
-      } catch (e) {
+      }, e => {
         log.stat.error(e);
         context.getFire()('stat', { id: data.id, error: e.message });
-      }
+      });
       break;
   }
 }
@@ -309,79 +335,89 @@ function runJob(context, data) {
   // TODO: white/black list for cmd
   log.job.trace(`Got a job request for ${data.type} ${data.cmd || '<unknown>'}`);
 
-  if (!context.runJobs) context.getFire()('job', { id: data.id, type: data.type, error: 'Jobs Not Supported' });
-  if (!context[data.type === 'fork' ? 'runForkStats' : 'runShellStats']) context.getFire()('job', { id: data.id, type: data.type, error: 'Job Type Not Supported' });
+  if (!context.runJobs) return context.getFire()('job', { id: data.id, type: data.type, error: 'Jobs Not Supported' });
+  if (!context[data.type === 'fork' ? 'runForkJobs' : 'runShellJobs']) return context.getFire()('job', { id: data.id, type: data.type, error: 'Job Type Not Supported' });
 
 
   if (data.type === 'fork') { // node script
-    // allow process to send certain things back to scheduler
-    try {
-      let args = [];
-      if (data.args) args = args.concat(data.args);
-      let p = child.fork(data.cmd, args, {
-        cwd: data.path || os.tmpdir(),
-        silent: true,
-        env: data.env || {}
-        // TODO: uid, gid
-      });
+    commandAvailable(context, data, false).then((cmd) => {
+      // TODO: allow process to send certain things back to scheduler e.g. steps and messages
+      try {
+        let args = [];
+        if (data.args) args = args.concat(data.args);
+        let p = child.fork(data.cmd, args, {
+          cwd: cmd.path || data.path || os.tmpdir(),
+          silent: true,
+          env: data.env || {}
+          // TODO: uid, gid
+        });
 
-      chunkStream(p.stdout, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'output', output: chunk }));
-      chunkStream(p.stderr, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'error', output: chunk }));
+        chunkStream(p.stdout, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'output', output: chunk }));
+        chunkStream(p.stderr, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'error', output: chunk }));
 
-      p.on('error', e => {
-        if (data.id) delete context.jobs[data.id];
+        p.on('error', e => {
+          if (data.id) delete context.jobs[data.id];
+          log.job.error(e);
+          context.getFire()('done', { id: data.id, result: 1, error: e.message });
+        });
+
+        p.on('message', msg => {
+          // TODO: allow steps, messages, etc here
+          log.job.job.trace(`Got a message for ${data.cmd}`, msg);
+        });
+        p.send(JSON.stringify({ message: 'config', config: data.config || {} }));
+
+        p.on('exit', code => {
+          log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
+          context.getFire()('done', { id: data.id, result: code });
+          if (data.id) delete context.jobs[data.id];
+        });
+
+        if (data.id) context.jobs[data.id] = { procees: p, data };
+      } catch (e) {
         log.job.error(e);
         context.getFire()('done', { id: data.id, result: 1, error: e.message });
-      });
-
-      p.on('message', msg => {
-        // TODO: allow steps, messages, etc here
-        log.job.job.trace(`Got a message for ${data.cmd}`, msg);
-      });
-      p.send(JSON.stringify({ message: 'config', config: data.config || {} }));
-
-      p.on('exit', code => {
-        log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
-        context.getFire()('done', { id: data.id, result: code });
-        if (data.id) delete context.jobs[data.id];
-      });
-
-      if (data.id) context.jobs[data.id] = { procees: p, data };
-    } catch (e) {
+      }
+    }, e => {
       log.job.error(e);
       context.getFire()('done', { id: data.id, result: 1, error: e.message });
-    }
+    });
   } else if (data.type === 'shell') { // shell script or other executable
-    try {
-      let args = [];
-      if (data.args) args = args.concat(data.args);
-      let p = child.spawn(data.cmd, args, {
-        cwd: data.path || os.tmpdir(),
-        stdio: 'pipe',
-        env: data.env || {}
-        // TODO: uid, gid
-      });
+    commandAvailable(context, data, false).then((cmd) => {
+      try {
+        let args = [];
+        if (data.args) args = args.concat(data.args);
+        let p = child.spawn(data.cmd, args, {
+          cwd: cmd.path || data.path || os.tmpdir(),
+          stdio: 'pipe',
+          env: data.env || {}
+          // TODO: uid, gid
+        });
 
-      p.on('error', e => {
-        if (data.id) delete context.jobs[data.id];
+        p.on('error', e => {
+          if (data.id) delete context.jobs[data.id];
+          log.job.error(e);
+          context.getFire()('done', { id: data.id, result: 1, error: e.message });
+        });
+
+        chunkStream(p.stdout, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'output', output: chunk }));
+        chunkStream(p.stderr, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'error', output: chunk }));
+
+        p.on('exit', code => {
+          log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
+          context.getFire()('done', { id: data.id, result: code });
+          if (data.id) delete context.jobs[data.id];
+        });
+
+        if (data.id) context.jobs[data.id] = { procees: p, data };
+      } catch (e) {
         log.job.error(e);
         context.getFire()('done', { id: data.id, result: 1, error: e.message });
-      });
-
-      chunkStream(p.stdout, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'output', output: chunk }));
-      chunkStream(p.stderr, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'error', output: chunk }));
-
-      p.on('exit', code => {
-        log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
-        context.getFire()('done', { id: data.id, result: code });
-        if (data.id) delete context.jobs[data.id];
-      });
-
-      if (data.id) context.jobs[data.id] = { procees: p, data };
-    } catch (e) {
+      }
+    }, e => {
       log.job.error(e);
       context.getFire()('done', { id: data.id, result: 1, error: e.message });
-    }
+    });
   }
 }
 
@@ -410,4 +446,102 @@ function chunkStream(stream, size, cb) {
   }
   stream.on('readable', flushBuffer);
   stream.on('end', () => flushBuffer(true));
+}
+
+function loadCommand(context, cmd) {
+  const lock = '__command_lock', name = `${cmd.name}/${cmd.version}`, base = fspath.join(context.commandPath, cmd.name, '' + cmd.version);
+  // check for already pending command
+  return sander.stat(base, lock).then(() => {
+    log.command.info(`Command ${cmd.name}/${cmd.version} is already being loaded.`);
+    return context.commands[name];
+  }, () => {
+    return sander.stat(base).then(
+      () => true,
+        () => {
+        log.command.info(`New command ${cmd.name}/${cmd.version} is being set up.`);
+        sander.writeFileSync(base, lock, '');
+        let wok, wfail, cok, cfail,
+        wholepr = new Promise((y, n) => {
+          wok = function() {
+            log.command.info(`Command setup for ${cmd.name}/${cmd.version} success.`);
+            delete context.commands[name];
+            sander.unlinkSync(base, lock);
+            y();
+          };
+          wfail = function(err) {
+            log.command.error(`Command setup for ${cmd.name}/${cmd.version} failed.`, err);
+            delete context.commands[name];
+            sander.rimrafSync(base);
+            n(err);
+          };
+        }),
+        compr = new Promise((y, n) => {
+          cok = function(c) {
+            delete context.commandPackets[name];
+            log.command.trace(`Command fetch succeded`);
+            y(c);
+          };
+          cfail = function(err) {
+            delete context.commandPackets[name];
+            log.command.trace(`Command fetch failed`, err);
+            n(err);
+          };
+        });
+        context.commands[name] = wholepr;
+        context.commandPackets[name] = { ok: cok, fail: cfail };
+
+        context.getFire()('fetchCommand', { name: cmd.name, version: cmd.version });
+
+        compr.then(c => {
+          log.command.trace(`Processing command from server...`);
+
+          const q = [];
+          for (let i = 0; i < c.files.length; i++) {
+            log.command.trace(`Writing file ${fspath.join(base, c.files[i].name)}...`);
+            // TODO: make sure files stay in base path
+            q.push(sander.writeFile(base, c.files[i].name, c.files[i].content, { encoding: c.files[i].encoding === 'binary' ? null : c.files[i].encoding || 'utf8', mode: c.files[i].mode || '0755' }));
+          }
+
+          return Promise.all(q).then(() => {
+            if (c.init && c.init.length > 0) {
+              const next = function() {
+                let w = c.init.shift();
+                if (w) {
+                  return exec(base, w.cmd, w.args).then(r => {
+                    if ((c.result || [0]).indexOf(r) !== -1) return next();
+                    else throw new Error(`${cmd} returned an unacceptable result ${r} (not in ${c.result || [0]}).`);
+                  });
+                } else return Promise.resolve(true);
+              };
+
+              next().then(wok, wfail);
+            } else {
+              wok();
+            }
+          }, wfail);
+        }, wfail).then(null, wfail);
+
+        return wholepr;
+      }
+    );
+    }
+  );
+}
+
+function exec(path, cmd, args) {
+  args = args || [];
+  if (!Array.isArray(args)) args = [args];
+  let ok, fail, p = child.spawn(cmd, args || [], { stdio: 'ignore', cwd: path });
+  let pr = new Promise((y, n) => { ok = y; fail = n; });
+  p.on('error', e => fail(e));
+  p.on('exit', c => ok(c));
+  return pr;
+}
+
+function commandAvailable(context, item, stat = false) {
+  const iscmd = !!item.command;
+  if (!iscmd) return Promise.resolve({});
+  if (!context.fetchCommands || (stat && !context.fetchStatCommands) || (!stat && !context.fetchJobCommands)) return Promise.reject(`Fetching is not configured for ${stat ? 'stat' : 'job'} ${item.command.name}.`);
+
+  return loadCommand(context, item.command).then(() => { return { path: fspath.join(context.commandPath, item.command.name, '' + item.command.version) }; });
 }

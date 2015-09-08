@@ -34,6 +34,8 @@ function logError(err) { log.error(err); }
 
 // TODO: keep track of the next scheduled pump for preemption purposes
 
+// TODO: check jobs for hold before firing
+
 module.exports = function(cfg) {
   if (cfg) config.merge(prefix, cfg);
 
@@ -188,6 +190,12 @@ module.exports = function(cfg) {
               case 'done':
                 log.server.trace(`Got a job done packet from ${c.id}`, data.data);
                 jobComplete(context, data.data, c.agent);
+                break;
+
+              case 'fetchCommand':
+                let cmd = data.data;
+                log.server.trace(`Got a command fetch request packet from ${c.id} for ${cmd.name}/${cmd.version}.`);
+                dao.commands(cmd).then(cmd => c.fire('command', cmd));
                 break;
 
               default:

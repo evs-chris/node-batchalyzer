@@ -13,6 +13,7 @@ module.exports = function(cfg, log) {
     log.job.trace(`Firing ${job.id} to ${agent.name}`);
     agent.fire('job', deepAssign({ id: job.id }, job.config));
 
+    job.status = 10;
     return dao.jobStart(job, agent).then(null, err => log.job.error(`Failed to set start time for ${job.id}`, err));
   }
 

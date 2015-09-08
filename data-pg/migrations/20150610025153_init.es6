@@ -45,6 +45,7 @@ create table ${prefix}orders (
   result integer, -- return code from actual job
   status integer not null default -1, -- 0 ok, -1 pending schedule, -2 pending resource, 1 failed, 2 soft failed, 3 cancelled, 4 unknown, 10 running
   steps json not null default '[]', -- jobs may emit step events to update progress
+  held boolean not null default false,
   eligible_at timestamptz,
   started_at timestamptz,
   completed_at timestamptz,

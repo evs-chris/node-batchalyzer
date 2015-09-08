@@ -38,11 +38,12 @@ module.exports = function(cfg) {
       pgdao({ db, table: `${prefix}stats` }).ready,
       pgdao({ db, table: `${prefix}stat_entries` }).ready,
       pgdao({ db, table: `${prefix}output` }).ready,
-      pgdao({ db, table: `${prefix}messages` }).ready
+      pgdao({ db, table: `${prefix}messages` }).ready,
+      pgdao({ db, table: `${prefix}commands` }).ready
     ];
 
     return Promise.all(bits).then(b => {
-      let dao = { jobs: b[0], schedules: b[1], entries: b[2], orders: b[3], resources: b[4], agents: b[5], statDefinitions: b[6], stats: b[7], statEntries: b[8], output: b[9], messages: b[10] };
+      let dao = { jobs: b[0], schedules: b[1], entries: b[2], orders: b[3], resources: b[4], agents: b[5], statDefinitions: b[6], stats: b[7], statEntries: b[8], output: b[9], messages: b[10], commands: b[11] };
 
       let lockResources = (function() {
         let resourceQ = [];
@@ -309,12 +310,13 @@ module.exports = function(cfg) {
         },
         // update the start timestamp
         jobStart(order, agent) {
-          return db.nonQuery(`update ${prefix}orders set started_at = ?, agent_id = ? where id = ?`, new Date(), agent.id, order.id);
+          return db.nonQuery(`update ${prefix}orders set started_at = ?, agent_id = ?, status = 10 where id = ?`, new Date(), agent.id, order.id);
         },
         // append job output
         jobOutput(order, type, output) {
           return db.transaction(function*(t) {
-            let count = yield t.nonQuery(`update ${prefix}output set ${type === 'error' ? 'syserr = syserr' : 'sysout = sysout'} || ? where id = ?;`, output, order.id);
+            yield t.nonQuery(`lock ${prefix}output in exclusive mode`);
+            let count = yield t.nonQuery(`update ${prefix}output set ${type === 'error' ? 'syserr = syserr' : 'sysout = sysout'} || ? where order_id = ?;`, output, order.id);
             if (count > 1) throw new Error('Tried to update sysout for too many orders.');
             else if (count < 1) {
               yield t.nonQuery(`insert into ${prefix}output (sysout, syserr, order_id) values (?, ?, ?)`, type === 'error' ? '' : output, type === 'error' ? output : '', order.id);
@@ -443,6 +445,17 @@ module.exports = function(cfg) {
 
             return yield dao.messages.upsert(msg);
           });
+        },
+        // commands
+        commands(opts = {}) {
+          if ('id' in opts) {
+            return dao.commands.findOne('id = ?', opts.id);
+          } else if ('name' in opts && 'version' in opts) {
+            return dao.commands.findOne('name = ? and version = ?', opts.name, opts.version);
+          } else return dao.commands.find();
+        },
+        putCommand(cmd) {
+          return dao.commands.upsert(cmd);
         }
       };
 
