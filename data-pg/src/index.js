@@ -85,6 +85,51 @@ module.exports = function(cfg) {
         entries() {
           return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id`, { fetch: { job: '' } });
         },
+        orders(opts = {}) {
+          let q = [''], join = '';
+          if ('schedule' in opts) {
+            q[0] += `${join}schedule_id = ?`;
+            q.push(opts.schedule);
+            join = ' AND ';
+          }
+
+          if ('entry' in opts) {
+            q[0] += `${join}entry_id = ?`;
+            q.push(opts.entry);
+            join = ' AND ';
+          }
+
+          if (!q[0]) return Promise.reject(new Error(`You don't really want all of the orders.`));
+
+          return dao.orders.find(q);
+        },
+        getOutput(opts = {}) {
+          let q = [''];
+
+          if ('entry' in opts && 'schedule' in opts) {
+            q[0] += 'order_id in (select id from orders where entry_id = ? and schedule_id = ? order by created_at desc limit 1) order by updated_at desc limit 1';
+            q.push(opts.entry, opts.schedule);
+          } else if ('order' in opts) {
+            q[0] += 'order_id = ?';
+            q.push(opts.order);
+          }
+
+          if (!q[0]) return Promise.reject(new Error(`Not enough conditions to find specific output.`));
+
+          return dao.output.findOne(q);
+        },
+        findEntry(id) {
+          return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id where e.id = ?`, id, { fetch: { job: '' } }).then(es => es[0]);
+        },
+        putJob(job) {
+          return dao.jobs.upsert(job);
+        },
+        putEntry(entry) {
+          return dao.entries.upsert(entry);
+        },
+        putOrder(order) {
+          return dao.orders.upsert(order);
+        },
         findOrder(id) {
           return dao.orders.query(`select o.*, @entry.*, @job.* from ${prefix}orders o join @${prefix}entries entry on o.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where o.id = ?`, id, { fetch: { entry: { job: '' } } }).then(rows => {
             if (rows.length !== 1) throw new Error('Wrong number of results');
@@ -103,8 +148,8 @@ module.exports = function(cfg) {
           } else {
             return dao.schedules.query(
               `with sched as (select @s.* from @${prefix}schedules s where s.active = true),
-              bits as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched) order by jobs.updated_at desc),
-              lasts as (select ROW_NUMBER() over(partition by @:jobs.entry_id) as rownum, bits.* from bits),
+              bits as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched) order by jobs.created_at desc),
+              lasts as (select ROW_NUMBER() over(partition by @:jobs.schedule_id, @:jobs.entry_id order by @:jobs.created_at desc) as rownum, bits.* from bits),
               stuff as (select * from lasts where rownum = 1)
               select sched.*, stuff.* from sched left join stuff on stuff.@:jobs.schedule_id = @:s.id where @:s.active = true`,
               { fetch: { jobs: [{ entry: { job: '' } }] } }
@@ -123,17 +168,24 @@ module.exports = function(cfg) {
               o.scheduleId = s.id;
               yield dao.orders.insert(o, { t });
             }
-            return yield dao.schedules.query(
-              `select @s.*, @jobs.*, @entry.*, @job.*
-              from @${prefix}schedules s left join @${prefix}orders jobs on jobs.schedule_id = s.id join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id
-              where s.id = ?`,
+            return dao.schedules.query(
+              `with sched as (select @s.* from @${prefix}schedules s where s.active = true),
+              stuff as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched))
+              select sched.*, stuff.* from sched left join stuff on stuff.@:jobs.schedule_id = @:s.id where @:s.id = ?`,
               s.id,
-              { fetch: { jobs: [{ entry: { job: '' } }] }, t }
+              { fetch: { jobs: [{ entry: { job: '' } }] } }
             ).then(ss => ss[0]);
           });
         },
+        deactivateSchedules(ss) {
+          if (ss && !Array.isArray(ss)) ss = [ss];
+          return db.nonQuery(`update ${prefix}schedules set active = false where id in ?`, [ss.map(s => s.id)]);
+        },
         resources() {
           return dao.resources.find();
+        },
+        putResource(res) {
+          return dao.resources.upsert(res);
         },
         // refresh resources - used once at startup
         refreshResources() {
@@ -300,6 +352,9 @@ module.exports = function(cfg) {
             return dao.agents.find();
           }
         },
+        putAgent(agent) {
+          return dao.agents.upsert(agent);
+        },
         // reset agent status to disconnected and return list
         resetAgents() {
           return db.transaction(function*(t) {
@@ -374,6 +429,7 @@ module.exports = function(cfg) {
             if ('message' in opts) msg.message = audit.message = opts.message;
             if ('who' in opts) audit.who = opts.who;
             if ('handle' in opts) msg.handle = opts.handle;
+            if ('category' in opts) msg.category = opts.category;
 
             if ('agentId' in opts) msg.agentId = opts.agentId;
             if ('statId' in opts) msg.statId = opts.statId;

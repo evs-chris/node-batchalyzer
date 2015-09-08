@@ -5,6 +5,9 @@
   "dependencies": {
     "flapjacks": "^0",
     "koa": "^1",
-    "koa-route": "^2"
+    "koa-route": "^2",
+    "co-body": "^4",
+    "basic-auth": "^1",
+    "koa-sendfile": "^1"
   }
 }

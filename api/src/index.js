@@ -2,6 +2,9 @@ const koa = require('koa');
 const config = require('flapjacks').read();
 const http = require('http');
 const route = require('koa-route');
+const sendfile = require('koa-sendfile');
+const body = require('co-body');
+const path = require('path');
 
 const configPrefix = 'batchalyzer.api';
 
@@ -52,7 +55,13 @@ module.exports = function(cfg) {
           error = e;
         }
 
-        log.server.info(`${this.method} ${this.path} ${error ? 'FAILED - ' + error.message : 'OK'} - ${this.status} - ${+(new Date()) - start}ms`);
+        let msg = [`${this.method} ${this.path} ${error ? 'FAILED - ' + error.message : 'OK'} - ${this.status} - ${+(new Date()) - start}ms`];
+        if (error) {
+          msg.push(error);
+          msg.push(error.stack);
+        }
+
+        log.server.info.apply(log.server, msg);
       });
     }
 
@@ -60,61 +69,109 @@ module.exports = function(cfg) {
 
     // get active schedules with jobs
     app.use(route.get(`${mount}/schedules`, function*() {
-      let schedules = yield dao.activeSchedules({ allOrders: false });
-
-      for (let i = 0; i < schedules.length; i++) {
-        const s = schedules[i];
-        delete s._generated_loaded;
-        for (let ii = 0; ii < s.jobs.length; ii++) {
-          const j = s.jobs[ii];
-          delete j._generated_loaded;
-          if (j.entry) {
-            delete j.entry._generated_loaded;
-            if (j.entry.job) delete j.entry.job._generated_loaded;
-          }
-        }
-      }
-
-      this.body = schedules;
+      this.body = stripGenerated(yield dao.activeSchedules({ allOrders: false }));
     }));
+
+    // post condition to schedule
+    app.use(route.post(`${mount}/schedule/condition`, form(function*() {
+      // TODO: add conditions
+      this.body = yield Promise.resolve('TODO');
+    })));
 
     // get agents
     app.use(route.get(`${mount}/agents`, function*() {
-      let agents = yield dao.agents();
+      this.body = stripGenerated(yield dao.agents());
+    }));
 
-      for (let i = 0; i < agents.length; i++) {
-        const a = agents[i];
-        delete a._generated_loaded;
-      }
-
-      this.body = agents;
+    // upsert agent
+    app.use(route.post(`${mount}/agent`, function*() {
+      this.body = stripGenerated(yield dao.putAgent(this.posted));
     }));
 
     // get resources
     app.use(route.get(`${mount}/resources`, function*() {
-      let res = yield dao.resources();
+      this.body = stripGenerated(yield dao.resources());
+    }));
 
-      for (let i = 0; i < res.length; i++) {
-        delete res[i]._generated_loaded;
-      }
-
-      this.body = res;
+    // upsert resource
+    app.use(route.post(`${mount}/resource`, function*() {
+      this.body = stripGenerated(yield dao.putResource(this.posted));
     }));
 
     // get messages
     app.use(route.get(`${mount}/messages`, function*() {
-      let msgs = yield dao.messages();
-
-      for (let i = 0; i < msgs.length; i++) {
-        delete msgs[i]._generated_loaded;
-      }
-
-      this.body = msgs;
+      this.body = stripGenerated(yield dao.messages());
     }));
 
-    // connect to scheduler for websocket fed updates
-    // pass live updates to clients (filtered for client? probably not?)
+    // get orders for entry
+    app.use(route.get(`${mount}/schedule/:schedule/orders/:entry`, function*(schedule, entry) {
+      this.body = stripGenerated(yield dao.orders({ schedule, entry }));
+    }));
+
+    // get output for order
+    app.use(route.get(`${mount}/output/:order`, function*(order) {
+      this.body = stripGenerated(yield dao.getOutput({ order }));
+    }));
+
+    // get last output for entry
+    app.use(route.get(`${mount}/schedule/:schedule/output/:entry`, function*(schedule, entry) {
+      this.body = stripGenerated(yield dao.getOutput({ schedule, entry }));
+    }));
+
+    // HTML Client
+    const assetsRE = /^\/(js|img|css)\//;
+    app.use(route.get(`${mount}/`, function*() {
+      let f = path.join(__dirname, 'client/index.html');
+      yield* sendfile.call(this, f);
+    }));
+    app.use(function*(next) {
+      if (this.path.replace(mount, '') === '/js/config.js') {
+        this.type = 'js';
+        this.body = `var config = {
+  mount: '${mount}'
+};`;
+      } else return yield next;
+    });
+    app.use(function*(next) {
+      if (this.method !== 'GET') return yield next;
+
+      let p = this.path.replace(mount, '');
+      if (assetsRE.test(p)) {
+        yield* sendfile.call(this, path.join(__dirname, 'client', p));
+      }
+    });
+
+    // TODO: connect to scheduler for websocket fed updates
+    // TODO: pass live updates to clients (filtered for client? probably not?)
 
     server.on('request', app.callback());
   });
 };
+
+function stripGenerated(what) {
+  if (!what) return what;
+  if (Array.isArray(what)) {
+    for (let i = 0; i < what.length; i++) {
+      if (typeof what[i] === 'object') stripGenerated(what[i]);
+    }
+  } else if (typeof what === 'object') {
+    if ('_generated_loaded' in what) {
+      delete what._generated_loaded;
+      for (let k in what) {
+        if (typeof what[k] === 'object') stripGenerated(what[k]);
+      }
+    }
+  }
+  return what;
+}
+
+function form(opts, func) {
+  const fn = typeof opts === 'function' ? opts : func;
+  const o = typeof opts === 'function' ? func || {} : opts;
+
+  if (typeof fn !== 'function') throw new Error('I need a function.');
+  return function*() {
+    this.posted = yield body(opts, this);
+    return yield fn.apply(this, Array.prototype.slice.call(arguments, 0));
+  };
+}

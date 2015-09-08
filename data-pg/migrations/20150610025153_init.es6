@@ -72,7 +72,7 @@ create table ${prefix}agents (
   key varchar not null, -- for auth
   config json not null default '{}', -- agent config -- probably define submodules to be pulled to agent here
   label varchar,
-  status integer, -- 0 not connected, 1 connected, 2 stale
+  status integer, -- 0 not connected, 1 connected, 2 stale, -1 offline on purpose
   groups varchar[] not null default ARRAY[]::varchar[],
   location varchar, -- ip connected from
   last_seen timestamptz,
@@ -129,6 +129,7 @@ create table ${prefix}messages (
   agent_id bigint references ${prefix}agents(id), -- an agent message
   handle varchar,
   status integer not null default 0, -- 0 - new, 1 - acknowledged, 2 - deferred, 3 - resolved
+  category integer,
   message varchar not null,
   extra json,
   audit json not null default '[]',
