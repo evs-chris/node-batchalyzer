@@ -151,7 +151,7 @@ function addTime(date, seconds) {
 }
 
 function zeroDate(date) {
-  let dt = new Date((date || new Date()).getTime());
+  let dt = new Date(typeof date === 'number' ? date : (date || new Date()).getTime());
   dt.setHours(0);
   dt.setMinutes(0);
   dt.setSeconds(0);

@@ -34,9 +34,6 @@ function logError(err) { log.error(err); }
 
 // TODO: keep track of the next scheduled pump for preemption purposes
 
-// TODO: need a special thing that runs at midnight to start next schedule...
-//  also flag any schedules that are complete and older than (1 or 2) days
-
 module.exports = function(cfg) {
   if (cfg) config.merge(prefix, cfg);
 
@@ -55,6 +52,7 @@ module.exports = function(cfg) {
 
     let context = { dao, schedules: {}, agents: [], stats: [], findOrder, findStat, fireJob, fireStat, reload };
     context.missingAfter = config.get(`${prefix}.agentMissingMinutes`, 5);
+    context.keepDone = config.get(`${prefix}.daysToKeepFinishedSchedules`, 3);
 
     function findOrder(id) { return _findOrder(context.schedules, dao, id); }
     function findStat(id) { return _findStat(context.stats, dao, id); }
@@ -92,7 +90,8 @@ module.exports = function(cfg) {
       ]).then(() => setup(context));
     }
 
-    return reload().then(() => { // set up socket and (optionally) http server
+    return reload().then(() => {
+      // set up socket and (optionally) http server
       if (config.get(`${prefix}.server`)) webServer = config.get(`${prefix}.server`);
       else {
         log.server.info('Starting own HTTP server on port ' + port);
@@ -212,13 +211,31 @@ module.exports = function(cfg) {
       pump(context);
 
       // return control object
-      return {
+      context.control = {
         close() {
           socketServer.close();
           if (initedServer) webServer.close();
+          return dao.resetAgents();
           //TODO: notify agents, wait for queue drain, etc?
         }
       };
+
+      // watch for sigint
+      if (process.platform === "win32") {
+        require("readline").createInterface({
+          input: process.stdin,
+          output: process.stdout
+        }).on("SIGINT", function () {
+          process.emit("SIGINT");
+        });
+      }
+
+      process.on("SIGINT", function () {
+        log.server.info('Shutting down...');
+        context.control.close().then(() => process.exit(), () => process.exit());
+      });
+
+      return context.control;
     });
   });
 };
@@ -251,6 +268,7 @@ function setup(context, date) {
   }).then(() => {
     context.schedules = schedules;
     scheduleNewDay(context);
+    expireSchedules(context);
   }, err => {
     log.error('Failed to set up schedule');
     log.error(err);
@@ -286,10 +304,14 @@ function newDay(context) {
           os[i].next = e.next;
           if ('intervalIndex' in e) os[i].intervalIndex = e.intervalIndex;
         }
+        context.schedules[s.id] = s;
         return s;
       });
     });
-  }).then(s => { scheduleNewDay(context); return s; });
+  }).then(s => {
+    scheduleNewDay(context);
+    return s;
+  });
 }
 
 // schedule the next newDay run if it isn't already scheduled
@@ -300,7 +322,7 @@ function scheduleNewDay(context) {
   log.schedule.info(`Next new day scheduled in ${Math.floor(+next / 1000)}s`);
   context.nextNewDay = setTimeout(() => {
     context.nextNewDay = false;
-    newDay(context);
+    newDay(context).then(() => expireSchedules(context));
   }, next);
 }
 
@@ -336,6 +358,24 @@ function refreshSchedule(context, s) {
     }
     return next();
   });
+}
+
+function expireSchedules(context) {
+  let { dao, schedules } = context, deactivate = [], target = zeroDate(+(new Date()) - (86400000 * context.keepDone));
+  sched: for (let k in schedules) {
+    const s = schedules[k];
+    for (let i = 0; i < s.jobs.length; i++) {
+      if (s.jobs[i].next) continue sched;
+    }
+    deactivate.push(s);
+  }
+
+  for (let i = deactivate.length - 1; i >= 0; i--) {
+    if (deactivate[i].target >= target) deactivate.splice(i, 1);
+  }
+
+  if (deactivate.length > 0) return context.dao.deactivateSchedules(deactivate);
+  else return Promise.resolve(true);
 }
 
 function missingAgents(context) {
