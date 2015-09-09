@@ -1,7 +1,7 @@
-  'use strict';
+'use strict';
 
-var config = require('flapjacks').read({ name: 'batchalyzer' });
-var log = (function() {
+const config = require('flapjacks').read({ name: 'batchalyzer' });
+const log = (function() {
   let prefix = config.get('logPrefix', '');
   let l = require('blue-ox');
   let general = l(prefix, 'trace');
@@ -16,15 +16,17 @@ var log = (function() {
 
   return general;
 })();
-var http = require('http');
-var ws = require('ws');
+const http = require('http');
+const ws = require('ws');
+const koa = require('koa');
+const route = require('koa-route');
 
-var prefix = `batchalyzer`;
+const prefix = `batchalyzer`;
 
-var { lpad, assign, deepAssign, inRange, nextInRange, nextTime, addTime, zeroDate } = require('./util');
-var { _findOrder, _fireJob, jobComplete, hasConditions, pump } = require('./job')(config, log);
-var { initStats, _findStat, _fireStat, statComplete } = require('./stat')(config, log);
-var { initAgent, newAgentInfo } = require('./agent')(config, log);
+const { lpad, assign, deepAssign, inRange, nextInRange, nextTime, addTime, zeroDate } = require('./util');
+const { _findOrder, _fireJob, jobComplete, hasConditions, pump } = require('./job')(config, log);
+const { initStats, _findStat, _fireStat, statComplete } = require('./stat')(config, log);
+const { initAgent, newAgentInfo } = require('./agent')(config, log);
 
 function noop() {}
 function logError(err) { log.error(err); }
@@ -35,6 +37,8 @@ function logError(err) { log.error(err); }
 // TODO: keep track of the next scheduled pump for preemption purposes
 
 // TODO: check jobs for hold before firing
+
+// TODO: webhooks for both input and various events
 
 module.exports = function(cfg) {
   if (cfg) config.merge(prefix, cfg);
@@ -50,11 +54,34 @@ module.exports = function(cfg) {
     // data is initialized
     // TODO: add a reload helper for loading config, etc changes
     let clients = [], apis = [], webServer, socketServer, initedServer = false, clientCount = 0;
-    let port = config.get(`${prefix}.port`, 8080);
+    const port = config.get(`${prefix}.port`, 8080);
+    const mount = config.get(`${prefix}.mount`, '/service/scheduler');
 
     let context = { dao, schedules: {}, agents: [], stats: [], findOrder, findStat, fireJob, fireStat, reload };
     context.missingAfter = config.get(`${prefix}.agentMissingMinutes`, 5);
     context.keepDone = config.get(`${prefix}.daysToKeepFinishedSchedules`, 3);
+
+    context.auth = config.get(`${prefix}.service.authenticate`);
+    if (typeof context.auth !== 'function') {
+      if (Array.isArray(context.auth)) {
+        const arr = context.auth;
+        context.auth = function(req) {
+          const user = req.headers.user, password = req.headers.password, key = req.headers['api-key'];
+          for (let i = 0; i < arr.length; i++) {
+            if ((arr[i].user === user && arr[i].password === password) || arr[i].key === key) return true;
+          }
+          return false;
+        };
+      } else context.auth = () => true;
+    }
+    if (typeof context.auth === 'function') {
+      const fn = context.auth;
+      context.auth = function(req) {
+        const res = fn(req);
+        if (res && typeof res.then !== 'function') return Promise.resolve(res);
+        else return res;
+      };
+    }
 
     function findOrder(id) { return _findOrder(context.schedules, dao, id); }
     function findStat(id) { return _findStat(context.stats, dao, id); }
@@ -73,8 +100,10 @@ module.exports = function(cfg) {
             let o = findAgent(a);
             if (o) {
               a.socket = o.socket;
-              a.socket.agent = a;
-              a.fire = o.socket.fire;
+              if (o.socket) {
+                a.socket.agent = a;
+                a.fire = o.socket.fire;
+              }
             }
           });
           context.agents = as;
@@ -119,6 +148,22 @@ module.exports = function(cfg) {
           cb(true);
         }
       } });
+
+      const app = koa();
+      app.use(function*(next) {
+        if (this.path.indexOf(mount) !== 0) this.throw(404);
+        if (!(yield context.auth(this.req))) this.throw(401);
+
+        return yield next;
+      });
+      app.use(route.get(`${mount}/reload`, function*() {
+        log.server.info(`Reloading...`);
+        yield reload();
+        pump(context);
+        this.type = 'json';
+        this.body = 'ok';
+      }));
+      webServer.on('request', app.callback());
 
       socketServer.on('connection', c => {
         c.id = clientCount++;
@@ -256,6 +301,7 @@ function setup(context, date) {
   let { dao } = context, schedules = {};
   return dao.activeSchedules().then(as => {
     let cur = false;
+    // TODO: pull in-mem details from old schedule if there is one?
     as.forEach(s => {
       s.targetDate = zeroDate(new Date(+s.target));
       schedules[s.id] = s;
