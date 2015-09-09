@@ -106,11 +106,14 @@ module.exports = function(cfg) {
           break;
 
         case 'info':
+          const versions = process.versions;
+          versions.agent = JSON.parse(sander.readFileSync(__dirname, 'package.json')).version || '0.0.0';
           // TODO: return crap that's available based on config and machine
           fire('info', {
             processors: os.cpus().length, memory: os.totalmem(), os: {
               platform: os.platform(), arch: os.arch(), release: os.release()
             }, hostname: os.hostname(),
+            versions,
             run: {
               stats: context.runStats,
               forkStats: context.runForkStats,
@@ -496,6 +499,7 @@ function loadCommand(context, cmd) {
         context.commands[name] = wholepr;
         context.commandPackets[name] = { ok: cok, fail: cfail };
 
+        // TODO: set a timeout to fail the promise here if there server doesn't respond in a reasonable time? (3min?)
         context.getFire()('fetchCommand', { name: cmd.name, version: cmd.version });
 
         compr.then(c => {

@@ -76,6 +76,7 @@ create table ${prefix}agents (
   status integer, -- 0 not connected, 1 connected, 2 stale, -1 offline on purpose
   groups varchar[] not null default ARRAY[]::varchar[],
   location varchar, -- ip connected from
+  info json not null default '{}', -- last info for agent
   last_seen timestamptz,
   created_at timestamptz not null default CURRENT_TIMESTAMP(3),
   updated_at timestamptz not null default CURRENT_TIMESTAMP(3)

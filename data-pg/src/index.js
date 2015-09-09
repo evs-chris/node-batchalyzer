@@ -364,14 +364,13 @@ module.exports = function(cfg) {
             return yield dao.agents.find();
           });
         },
+        // new agent info
+        agentInfo(agent, info, ip) {
+          return db.nonQuery(`update ${prefix}agents set location = ?, info = ? where id = ?`, ip, info, agent.id);
+        },
         // update an agent
         agentStatus(agent, status) {
-          return db.transaction(function*(t) {
-            let rec = yield dao.agents.findOne('id = ?', agent.id, { t });
-            rec.status = status;
-            rec.lastSeen = new Date();
-            return yield dao.agents.update(rec, { t });
-          });
+          return db.nonQuery(`update ${prefix}agents set status = ?, last_seen = ? where id = ?`, status, new Date(), agent.id);
         },
 
         // Stat related methods
