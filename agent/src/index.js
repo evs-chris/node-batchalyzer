@@ -1,8 +1,5 @@
 'use strict';
 
-// TODO: allow server to provide scripts for client to run
-//  cache scripts and check cached version against target
-
 const child = require('child_process');
 const os = require('os');
 const sander = require('sander');
@@ -101,7 +98,11 @@ module.exports = function(cfg) {
           break;
 
         case 'signal':
-          // TODO: signal or kill a job
+          let j = data.data;
+          if (j.id && context.jobs[j.id] && context.jobs[j.id].process) {
+            log.job.info(`Got a request to send ${j.signal || 'SIGTERM'} to j.id`);
+            context.jobs[j.id].process.kill(j.signal || 'SIGTERM');
+          }
           break;
 
         case 'info':
@@ -118,6 +119,11 @@ module.exports = function(cfg) {
               jobs: context.runJobs,
               forkJobs: context.runForkJobs,
               shellJobs: context.runShellJobs
+            },
+            command: {
+              fetch: context.fetchCommands,
+              fetchStat: context.fetchStatCommands,
+              fetchJob: context.fetchJobCommands
             }
           });
           break;
@@ -367,13 +373,13 @@ function runJob(context, data) {
         });
         p.send(JSON.stringify({ message: 'config', config: data.config || {} }));
 
-        p.on('exit', code => {
+        p.on('exit', (code, sig) => {
           log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
-          context.getFire()('done', { id: data.id, result: code });
+          context.getFire()('done', { id: data.id, result: code === null ? 128 + signum(sig) : code });
           if (data.id) delete context.jobs[data.id];
         });
 
-        if (data.id) context.jobs[data.id] = { procees: p, data };
+        if (data.id) context.jobs[data.id] = { process: p, data };
       } catch (e) {
         log.job.error(e);
         context.getFire()('done', { id: data.id, result: 1, error: e.message });
@@ -403,13 +409,13 @@ function runJob(context, data) {
         chunkStream(p.stdout, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'output', output: chunk }));
         chunkStream(p.stderr, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'error', output: chunk }));
 
-        p.on('exit', code => {
+        p.on('exit', (code, sig) => {
           log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
-          context.getFire()('done', { id: data.id, result: code });
+          context.getFire()('done', { id: data.id, result: code === null ? 128 + signum(sig) : code });
           if (data.id) delete context.jobs[data.id];
         });
 
-        if (data.id) context.jobs[data.id] = { procees: p, data };
+        if (data.id) context.jobs[data.id] = { process: p, data };
       } catch (e) {
         log.job.error(e);
         context.getFire()('done', { id: data.id, result: 1, error: e.message });
@@ -544,4 +550,11 @@ function commandAvailable(context, item, stat = false) {
   if (!context.fetchCommands || (stat && !context.fetchStatCommands) || (!stat && !context.fetchJobCommands)) return Promise.reject(`Fetching is not configured for ${stat ? 'stat' : 'job'} ${item.command.name}.`);
 
   return loadCommand(context, item.command).then(() => { return { path: fspath.join(context.commandPath, item.command.name, '' + item.command.version) }; });
+}
+
+const signals = { SIGHUP: 0, SIGINT: 1, SIGQUIT: 3, SIGABRT: 6, SIGKILL: 9, SIGALRM: 14, SIGTERM: 15 };
+function signum(sig) {
+  if (typeof sig === 'number') return sig;
+  sig = signals[sig];
+  return sig === undefined ? -1 : sig;
 }
