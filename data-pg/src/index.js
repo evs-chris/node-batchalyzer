@@ -137,6 +137,27 @@ module.exports = function(cfg) {
             else return rows[0];
           });
         },
+        orderStep(order, step) {
+          return db.transaction(function*(t) {
+            const o = yield dao.orders.findOne('id = ?', order.id);
+            o.steps.push(step);
+            yield dao.orders.update(o);
+            order.steps = o.steps;
+            order.updatedAt = o.updatedAt;
+            return order;
+          });
+        },
+        lastEntryOrder(entry, opts = {}) {
+          if (opts.success) {
+            return dao.orders.findOne('entry_id = ? and completed_at is not null and status = 0 order by completed_at desc limit 1', entry.id);
+          } else if (opts.fail) {
+            return dao.orders.findOne('entry_id = ? and completed_at is not null and status = 1 order by completed_at desc limit 1', entry.id);
+          } else if (opts.other) {
+            return dao.orders.findOne('entry_id = ? and completed_at is not null and status <> 0 and status <> 1 order by completed_at desc limit 1', entry.id);
+          } else {
+            return dao.orders.findOne('entry_id = ? and completed_at is not null order by completed_at desc limit 1', entry.id);
+          }
+        },
         // get list of all active orders by schedule
         activeSchedules(opts = {}) {
           if (!('allOrders' in opts) || opts.allOrders) {

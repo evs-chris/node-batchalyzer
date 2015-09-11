@@ -198,6 +198,8 @@ module.exports = function(cfg) {
 
         initAgent(context, c.agent).then(() => {
           c.on('message', (data, flags) => {
+            let m;
+
             try {
               data = JSON.parse(data);
             } catch (e) {
@@ -216,7 +218,6 @@ module.exports = function(cfg) {
               case 'info':
                 log.server.trace(`Got an info packet from ${c.id}`, data.data);
                 newAgentInfo(context, c.agent, data.data);
-                // TODO: configure agent based on info, e.g. what is and isn't allowed, automatic resources, etc
 
                 // there may be jobs waiting on this agent to attach
                 pump(context);
@@ -238,9 +239,37 @@ module.exports = function(cfg) {
                 break;
 
               case 'fetchCommand':
-                let cmd = data.data;
+                const cmd = data.data;
                 log.server.trace(`Got a command fetch request packet from ${c.id} for ${cmd.name}/${cmd.version}.`);
                 dao.commands(cmd).then(cmd => c.fire('command', cmd));
+                break;
+
+              case 'fetchPrevious':
+                m = data.data;
+                log.server.trace(`Got a previous request from ${c.id} for ${m.entryId}`);
+                findOrder(m.id).then(o => {
+                  dao.lastEntryOrder({ id: o.entryId }, m).then(o => {
+                    log.server.trace(`Returning found last entry to ${c.id} for ${m.id}`);
+                    c.fire('previous', { request: m, previous: o });
+                  }, () => {
+                    log.server.trace(`Returning no last entry to ${c.od} for ${m.entryId}`);
+                    c.fire('previous', { request: m });
+                  });
+                });
+                break;
+
+              case 'message':
+                data.data.agentId = c.agent.id;
+                log.server.trace(`Got a message from ${c.id}`, data.data);
+                dao.message(data.data);
+                break;
+
+              case 'step':
+                m = data.data;
+                log.server.trace(`Got a step from ${c.id} for ${m.id}`);
+                findOrder(m.id).then(o => {
+                  return dao.orderStep(o, m.step);
+                });
                 break;
 
               default:

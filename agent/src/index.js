@@ -27,7 +27,7 @@ module.exports = function(cfg) {
   if (cfg) config.merge(prefix, cfg);
   let shutdown = false, beat, socket, backoff = 0, connected = false;
   let messageQueue = [];
-  let context = { jobs: {}, commands: {}, commandPackets: {} };
+  let context = { jobs: {}, commands: {}, commandPackets: {}, previous: {} };
   let drainInterval = config.get(`${prefix}.drainInterval`, 1000), heartbeatInterval = config.get(`${prefix}.heartbeat`, 50);
   let backoffStep = config.get(`${prefix}.backoffStep`, 30), backoffMax = config.get(`${prefix}.backoffMax`, 300);
   let backoffStart = config.get(`${prefix}.backoffStart`, 10);
@@ -140,6 +140,15 @@ module.exports = function(cfg) {
           }
           break;
 
+        case 'previous':
+          const m = data.data, pr = context.previous[`${m.request.id}_${m.request.success}_${m.request.fail}_${m.request.other}`];
+          log.job.trace(`Got a previous response for ${m.request.id} that ${pr ? 'matches' : 'doesn\'t match'}: ${m.previous ? 'yep' : 'nope'}`, m.request);
+          if (pr) {
+            if (m.previous) pr.ok(m.previous);
+            else pr.fail('Not Found');
+          }
+          break;
+
         default:
           log.client.warn('Got an unknown message from the server.');
           break;
@@ -177,7 +186,6 @@ module.exports = function(cfg) {
         // set messages to queue
         fire = queueFire;
 
-        // TODO: make configurable
         if (backoff < backoffMax * 1000) { // if less than 5 minutes, add 30 seconds
           backoff += backoffStep * 1000;
         }
@@ -197,7 +205,6 @@ module.exports = function(cfg) {
 
       if (!shutdown) {
         socket = undefined;
-        // TODO: start trying to reconnect with backoff
         log.client.info('Disconnected from server.');
         backoff = backoffStart * 1000;
         log.client.info(`Trying to reconnect in ${backoff/1000} seconds...`);
@@ -339,7 +346,6 @@ function getStat(context, data) {
   }
 }
 
-// TODO: job/process registry so scheduler can cause job to abort
 function runJob(context, data) {
   // TODO: white/black list for cmd
   log.job.trace(`Got a job request for ${data.type} ${data.cmd || '<unknown>'}`);
@@ -350,7 +356,6 @@ function runJob(context, data) {
 
   if (data.type === 'fork') { // node script
     commandAvailable(context, data, false).then((cmd) => {
-      // TODO: allow process to send certain things back to scheduler e.g. steps and messages
       try {
         let args = [];
         if (data.args) args = args.concat(data.args);
@@ -371,8 +376,53 @@ function runJob(context, data) {
         });
 
         p.on('message', msg => {
-          // TODO: allow steps, messages, etc here
-          log.job.job.trace(`Got a message for ${data.cmd}`, msg);
+          try {
+            msg = JSON.parse(msg);
+          } catch (e) {
+            log.job.error(`Invalid message from process ${p.pid} job ${data.id}`, e);
+            return;
+          }
+
+          log.job.trace(`Got a message for ${data.cmd}`, msg);
+          switch (msg.message) {
+            case 'previous':
+              msg.data.id = data.id;
+              log.job.trace(`Requesting previous for ${data.id}`, msg.data);
+              let pv = msg.data, ok, fail, pr = new Promise((y, n) => {
+                ok = (o) => {
+                  delete context.previous[`${pv.id}_${pv.success}_${pv.fail}_${pv.other}`];
+                  log.job.trace(`Sending requested previous order for ${pv.id}`);
+                  y(o);
+                };
+                fail = (err) => {
+                  delete context.previous[`${pv.id}_${pv.success}_${pv.fail}_${pv.other}`];
+                  log.job.trace(`Sending no previous order message for ${pv.id}`);
+                  n(err);
+                };
+              });
+              context.previous[`${pv.id}_${pv.success}_${pv.fail}_${pv.other}`] = { ok, fail };
+              pr.then(
+                o => p.send(JSON.stringify({ message: 'previous', previous: o })),
+                () => p.send(JSON.stringify({ message: 'previous' }))
+              );
+              context.getFire()('fetchPrevious', pv);
+              break;
+
+            case 'message':
+              msg.data.orderId = data.id;
+              log.job.trace(`${data.id} sending message`, msg.data);
+              context.getFire()('message', msg.data);
+              break;
+
+            case 'step':
+              log.job.trace(`${data.id} sending step`);
+              context.getFire()('step', { id: data.id, step: msg.data });
+              break;
+
+            default:
+              log.job.warn(`Unknown message from process ${p.pid} job ${data.id}: ${msg.action}`);
+              break;
+          }
         });
         p.send(JSON.stringify({ message: 'config', config: data.config || {} }));
 
