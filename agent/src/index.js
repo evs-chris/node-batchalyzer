@@ -555,10 +555,17 @@ function loadCommand(context, cmd) {
         compr.then(c => {
           log.command.trace(`Processing command from server...`);
 
+          // make sure the command doesn't get outsie its box
+          for (let i = 0; i < c.files.length; i++) {
+            if (fspath.join(base, c.files[i].name).indexOf(base) !== 0) {
+              log.command.error(`Refusing to write out of command path: ${fspath.join(base, c.files[i].name)}`);
+              throw new Error(`Attept to write outside command path: ${fspath.join(base, c.files[i].name)}`);
+            }
+          }
+
           const q = [];
           for (let i = 0; i < c.files.length; i++) {
             log.command.trace(`Writing file ${fspath.join(base, c.files[i].name)}...`);
-            // TODO: make sure files stay in base path
             q.push(sander.writeFile(base, c.files[i].name, c.files[i].content, { encoding: c.files[i].encoding === 'binary' ? null : c.files[i].encoding || 'utf8', mode: c.files[i].mode || '0755' }));
           }
 
