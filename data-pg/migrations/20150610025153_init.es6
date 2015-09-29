@@ -130,6 +130,7 @@ create table ${prefix}messages (
   order_id bigint references ${prefix}orders(id), -- a job message
   agent_id bigint references ${prefix}agents(id), -- an agent message
   handle varchar,
+  priority integer not null default 1, -- higher is more important
   status integer not null default 0, -- 0 - new, 1 - acknowledged, 2 - deferred, 3 - resolved
   category integer,
   message varchar not null,

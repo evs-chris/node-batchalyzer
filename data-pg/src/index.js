@@ -452,6 +452,7 @@ module.exports = function(cfg) {
             if ('who' in opts) audit.who = opts.who;
             if ('handle' in opts) msg.handle = opts.handle;
             if ('category' in opts) msg.category = opts.category;
+            if ('priority' in opts) msg.priority = opts.priority;
 
             if ('agentId' in opts) msg.agentId = opts.agentId;
             if ('statId' in opts) msg.statId = opts.statId;

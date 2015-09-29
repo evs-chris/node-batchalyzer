@@ -1,5 +1,7 @@
 'use strict';
 
+// TODO: automatically (option) install job helper module for commands
+
 const child = require('child_process');
 const os = require('os');
 const sander = require('sander');
