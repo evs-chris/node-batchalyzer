@@ -47,6 +47,25 @@ module.exports = function(cfg) {
   context.maxStatTime = config.get(`${prefix}.maxStatSeconds`, 30);
   context.outputChunk = config.get(`${prefix}.outputChunkBytes`, 8192);
   context.commandPath = config.get(`${prefix}.commandPath`, 'commands');
+  context.halting = false;
+
+  context.pending = (function() {
+    let res = { pending: 0 };
+    let listeners = [];
+
+    res.add = function() { res.pending++; };
+    res.done = function() {
+      res.pending--;
+      if (res.pending === 0) {
+        listeners.forEach(l => process.nextTick(() => l()));
+      }
+    };
+    res.onDrain = function(cb) {
+      listeners.push(cb);
+    };
+
+    return res;
+  })();
 
   function connect() {
     socket = new WS(config.get(`${prefix}.server`), {
@@ -219,7 +238,7 @@ module.exports = function(cfg) {
   connect();
 
   // return control object
-  return {
+  let control = {
     close() {
       if (beat) clearTimeout(beat);
       beat = undefined;
@@ -227,6 +246,43 @@ module.exports = function(cfg) {
       if (socket) socket.close();
     }
   };
+
+  process.on('SIGINT', () => {
+    function drainQueue() {
+      if (messageQueue.length > 0) {
+        log.client.warn('Waiting on message queue to drain...');
+        setTimeout(drainQueue, 10000);
+      } else {
+        done();
+      }
+    }
+
+    function done() {
+      log.client.info('Shutdown complete.');
+      control.close();
+    }
+
+    if (!context.halting) {
+      log.client.info('Gracefully shutting down...');
+      context.halting = true;
+      context.getFire()('halting');
+
+      if (context.pending.pending > 0) {
+        context.pending.onDrain(() => {
+          drainQueue();
+        });
+      } else drainQueue();
+    } else if (!context.forceHalting) {
+      log.client.info('Less gracefully shutting down...');
+      context.forceHalting = true;
+      drainQueue();
+    } else {
+      log.client.info('Forcibly shuffing down...');
+      done();
+    }
+  });
+
+  return control;
 };
 // task types: stat (mem, disk, etc - predefined or shell), script (js-only job), or process (collect stdout and stderr separately) - probably have some sort of expect thing to make process automation easy
 
@@ -252,6 +308,7 @@ function getStat(context, data) {
       break;
 
     case 'fork':
+      context.pending.add();
       commandAvailable(context, data, true).then((cmd) => {
         try {
           let args = [];
@@ -265,6 +322,7 @@ function getStat(context, data) {
 
           p.on('message', msg => {
             log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} complete as ${msg.value}`);
+            context.pending.done();
             context.getFire()('stat', { id: data.id, type: data.type, value: msg.value || 0, status: msg.status || '' });
             p.disconnect();
           });
@@ -278,20 +336,24 @@ function getStat(context, data) {
             timeout = setTimeout(() => {
               p.kill();
               log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} cancelled due to timeout`);
+              context.pending.done();
               context.getFire()('stat', { error: 'timeout' });
             }, (data.limit || context.maxStatTime) * 1000);
           }
         } catch (e) {
           log.stat.error(e);
+          context.pending.done();
           context.getFire()('stat', { id: data.id, error: e.message });
         }
       }, e => {
         log.stat.error(e);
+        context.pending.done();
         context.getFire()('stat', { id: data.id, error: e.message });
       });
       break;
 
     case 'shell':
+      context.pending.add();
       commandAvailable(context, data, true).then((cmd) => {
         try {
           let args = [];
@@ -322,6 +384,7 @@ function getStat(context, data) {
                   status = '';
                 }
                 log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} complete as ${value}`);
+                context.pending.done();
                 context.getFire()('stat', { id: data.id, type: data.type, value, status });
               }
               if (timeout) clearTimeout(timeout);
@@ -333,15 +396,18 @@ function getStat(context, data) {
               killed = true;
               p.kill();
               log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} cancelled due to timeout`);
+              context.pending.done();
               context.getFire()('stat', { error: 'timeout' });
             }, (data.limit || context.maxStatTime) * 1000);
           }
         } catch (e) {
           log.stat.error(e);
+          context.pending.done();
           context.getFire()('stat', { id: data.id, error: e.message });
         }
       }, e => {
         log.stat.error(e);
+        context.pending.done();
         context.getFire()('stat', { id: data.id, error: e.message });
       });
       break;
@@ -357,6 +423,7 @@ function runJob(context, data) {
 
 
   if (data.type === 'fork') { // node script
+    context.pending.add();
     commandAvailable(context, data, false).then((cmd) => {
       try {
         let args = [];
@@ -374,6 +441,7 @@ function runJob(context, data) {
         p.on('error', e => {
           if (data.id) delete context.jobs[data.id];
           log.job.error(e);
+          context.pending.done();
           context.getFire()('done', { id: data.id, result: 1, error: e.message });
         });
 
@@ -430,6 +498,7 @@ function runJob(context, data) {
 
         p.on('exit', (code, sig) => {
           log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
+          context.pending.done();
           context.getFire()('done', { id: data.id, result: code === null ? 128 + signum(sig) : code });
           if (data.id) delete context.jobs[data.id];
         });
@@ -437,13 +506,16 @@ function runJob(context, data) {
         if (data.id) context.jobs[data.id] = { process: p, data };
       } catch (e) {
         log.job.error(e);
+        context.pending.done();
         context.getFire()('done', { id: data.id, result: 1, error: e.message });
       }
     }, e => {
       log.job.error(e);
+      context.pending.done();
       context.getFire()('done', { id: data.id, result: 1, error: e.message });
     });
   } else if (data.type === 'shell') { // shell script or other executable
+    context.pending.add();
     commandAvailable(context, data, false).then((cmd) => {
       try {
         let args = [];
@@ -458,6 +530,7 @@ function runJob(context, data) {
         p.on('error', e => {
           if (data.id) delete context.jobs[data.id];
           log.job.error(e);
+          context.pending.done();
           context.getFire()('done', { id: data.id, result: 1, error: e.message });
         });
 
@@ -467,16 +540,19 @@ function runJob(context, data) {
         p.on('exit', (code, sig) => {
           log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
           context.getFire()('done', { id: data.id, result: code === null ? 128 + signum(sig) : code });
+          context.pending.done();
           if (data.id) delete context.jobs[data.id];
         });
 
         if (data.id) context.jobs[data.id] = { process: p, data };
       } catch (e) {
         log.job.error(e);
+        context.pending.done();
         context.getFire()('done', { id: data.id, result: 1, error: e.message });
       }
     }, e => {
       log.job.error(e);
+      context.pending.done();
       context.getFire()('done', { id: data.id, result: 1, error: e.message });
     });
   }

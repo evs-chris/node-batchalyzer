@@ -41,7 +41,7 @@ module.exports = function(cfg, log) {
       let agent;
       for (let i = 0; i < agents.length; i++) {
         if (stat.agentId == agents[i].id) {
-          if (!agents[i].socket) log.stat.info(`Agent ${agents[i].name} is not connected for stat ${stat.definition.name}`);
+          if (!agents[i].socket || agents[i].halting) log.stat.info(`Agent ${agents[i].name} is not connected${agents[i].halting ? ' (halting)' : ''} for stat ${stat.definition.name}`);
           else {
             let def = stat.definition;
             log.stat.info(`Firing ${def.name} for ${agents[i].name}`);

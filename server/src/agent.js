@@ -12,6 +12,7 @@ module.exports = function(cfg, log) {
     const { dao } = context;
     // TODO: upate resources based on info? if there wasn't manual config?
     agent.info = info;
+    agent.halting = false;
     agent.location = agent.socket.upgradeReq.headers['x-forwarded-for'] || agent.socket.upgradeReq.connection.remoteAddress;
     return dao.agentInfo(agent, info, agent.location);
   }

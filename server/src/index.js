@@ -31,14 +31,16 @@ const { initAgent, newAgentInfo } = require('./agent')(config, log);
 function noop() {}
 function logError(err) { log.error(err); }
 
-// TODO: second client type that can request state and get updates
+// TODO: second client type that can request state and get updates -- auth via config
 // TODO: API server is separate & uses second client type
 
 // TODO: keep track of the next scheduled pump for preemption purposes
 
-// TODO: check jobs for hold before firing
-
 // TODO: webhooks for both input and various events
+
+// TODO: signal to reload config file and apply changes
+
+// TODO: refresh API that only pulls jobs with setups updated since last check?
 
 module.exports = function(cfg) {
   if (cfg) config.merge(prefix, cfg);
@@ -223,6 +225,11 @@ module.exports = function(cfg) {
                 pump(context);
                 break;
 
+              case 'halting':
+                log.server.info(`Got a halt notification from ${c.id} - ${c.agent.name}`);
+                c.agent.halting = true;
+                break;
+
               case 'stat':
                 log.server.trace(`Got a stat packet from ${c.id}: ${data.data.value}`, data.data);
                 statComplete(context, data.data);
@@ -313,8 +320,17 @@ module.exports = function(cfg) {
       }
 
       process.on("SIGINT", function () {
-        log.server.info('Shutting down...');
-        context.control.close().then(() => process.exit(), () => process.exit());
+        if (pump.isHalted()) {
+          log.server.info('Forcibly shutting down...');
+          context.control.close().then(() => process.exit(), () => process.exit());
+        } else {
+          log.server.info('Gracefully shutting down...');
+          pump.on('halted', () => {
+            log.server.info('Shutdown complete.');
+            context.control.close().then(() => process.exit(), () => process.exit(1));
+          });
+          pump.halt(context);
+        }
       });
 
       return context.control;

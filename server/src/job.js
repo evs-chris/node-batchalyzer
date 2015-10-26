@@ -1,5 +1,18 @@
 'use strict';
 
+const emitter = (function() {
+  let util = require('util');
+  let EventEmitter = require('events');
+
+  function Emitter() {
+    EventEmitter.call(this);
+  }
+
+  util.inherits(Emitter, EventEmitter);
+
+  return new Emitter();
+})();
+
 var { isEmptyObject, zeroDate, nextTime, addTime, deepAssign, rand } = require('./util');
 var prefix = 'batchalyzer';
 var agentRE = /\$AGENT/g;
@@ -110,6 +123,9 @@ module.exports = function(cfg, log) {
           let s = schedules[job.scheduleId];
 
           if (s) {
+            // don't try to schedule on-demand jobs again
+            if (job.onDemand) return true;
+
             // make sure this job doesn't already have an order pending
             for (let i = 0; i < s.jobs.length; i++) {
               if (s.jobs[i].entryId === job.entryId && s.jobs[i].status < 0) {
@@ -135,7 +151,7 @@ module.exports = function(cfg, log) {
 
   // throttled schedule pump - defaults to running no more than once per 10 seconds
   var pump = (function() {
-    let timeout, again = false, nextCycle;
+    let timeout, again = false, nextCycle, halted = false;
 
     function pump(context) {
       let { schedules, dao } = context, queue = [], next, now = new Date();
@@ -167,7 +183,7 @@ module.exports = function(cfg, log) {
 
         for (let i = 0; i < s.jobs.length; i++) {
           let j = s.jobs[i];
-          if (j.status >= 0) continue; // skip non-pending orders
+          if (j.status >= 0 || j.held) continue; // skip non-pending orders
 
           if (!j.next) {
             j.next = nextTime(zeroDate(), j, isEmptyObject(j.entry.schedule) ? (j.entry.job || {}).schedule : j.entry.schedule);
@@ -225,14 +241,49 @@ module.exports = function(cfg, log) {
     }
 
     function last(context) {
-      if (timeout) again = true;
-      else {
-        timeout = true;
-        pump(context).then(() => {
-          timeout = setTimeout(middle, 10000, context);
-        });
+      if (halted) {
+        let schedules = context.schedules;
+        for (let k in schedules) {
+          let jobs = schedules[k].jobs || [];
+          for (let i = 0; i < jobs.length; i++) {
+            // if there are jobs still running, wait for them to finish
+            if (jobs[i].status === 10) return;
+          }
+        }
+        emitter.emit('halted');
+      } else {
+        if (timeout) again = true;
+        else {
+          timeout = true;
+          pump(context).then(() => {
+            timeout = setTimeout(middle, 10000, context);
+          });
+        }
       }
     }
+
+    last.halt = function(context) {
+      halted = true;
+      emitter.emit('halting');
+      let schedules = context.schedules;
+      for (let k in schedules) {
+        let jobs = schedules[k].jobs || [];
+        for (let i = 0; i < jobs.length; i++) {
+          if (jobs[i].status === 10) return;
+        }
+      }
+      emitter.emit('halted');
+    };
+    last.isHalted = function() { return halted; };
+    last.on = emitter.on.bind(emitter);
+    last.once = emitter.once.bind(emitter);
+    last.off = function(ev, listener) {
+      if (listener) {
+        emitter.removeListener(ev, listener);
+      } else {
+        emitter.removeAllListeners(ev);
+      }
+    };
 
     return last;
   })();
@@ -243,7 +294,7 @@ module.exports = function(cfg, log) {
     function next() {
       let j = queue.shift();
 
-      if (j) {
+      if (j && !j.held) {
         let as = matchingAgents(agents, j);
         if (as.length < 1) {
           // TODO: message and unschedule?
@@ -298,7 +349,7 @@ module.exports = function(cfg, log) {
     let as = [], cfg = job.config || {};
     for (let i = 0; i < agents.length; i++) {
       let a = agents[i];
-      if (!a.socket) continue;
+      if (!a.socket || a.halting) continue;
 
       if (cfg.agent && cfg.agent === a.name) as.push(a);
       else if (cfg.group && a.groups.indexOf(cfg.group) !== -1) as.push(a);
