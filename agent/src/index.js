@@ -34,6 +34,8 @@ module.exports = function(cfg) {
   let backoffStep = config.get(`${prefix}.backoffStep`, 30), backoffMax = config.get(`${prefix}.backoffMax`, 300);
   let backoffStart = config.get(`${prefix}.backoffStart`, 10);
 
+  if (config.get('process.name') !== false) process.title = config.get('process.name', 'batchalyzer agent');
+
   context.runStats = config.get(`${prefix}.runStats`, true);
   context.runForkStats = !context.runStats ? false : config.get(`${prefix}.runForkStats`, true);
   context.runShellStats = !context.runStats ? false : config.get(`${prefix}.runShellStats`, true);
@@ -244,6 +246,7 @@ module.exports = function(cfg) {
       beat = undefined;
       shutdown = true;
       if (socket) socket.close();
+      process.exit();
     }
   };
 
@@ -265,7 +268,7 @@ module.exports = function(cfg) {
     if (!context.halting) {
       log.client.info('Gracefully shutting down...');
       context.halting = true;
-      context.getFire()('halting');
+      if (connected) context.getFire()('halting');
 
       if (context.pending.pending > 0) {
         context.pending.onDrain(() => {
