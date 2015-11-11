@@ -17,6 +17,8 @@ var { isEmptyObject, zeroDate, nextTime, addTime, deepAssign, rand } = require('
 var prefix = 'batchalyzer';
 var agentRE = /\$AGENT/g;
 
+// TODO: meta lock queue that makes sure nothing runs while pumping or setting up
+
 module.exports = function(cfg, log) {
   let pumpMax = cfg.get(`${prefix}.maxScheduleWaitSeconds`, 600);
 
@@ -108,7 +110,7 @@ module.exports = function(cfg, log) {
 
       return next.then(() => {
         let resources = {};
-        if (job.config.resources) {
+        if (job.config && job.config.resources) {
           for (let k in job.config.resources) {
             let kk = k.replace(agentRE, agent.name);
             if (kk in resources) resources[kk] += job.config.resources[k];
@@ -128,7 +130,7 @@ module.exports = function(cfg, log) {
 
             // make sure this job doesn't already have an order pending
             for (let i = 0; i < s.jobs.length; i++) {
-              if (s.jobs[i].entryId === job.entryId && s.jobs[i].status < 0) {
+              if (s.jobs[i].entryId === job.entryId && s.jobs[i].status < 0 && !s.jobs[i].onDemand) {
                 return true;
               }
             }
@@ -154,7 +156,7 @@ module.exports = function(cfg, log) {
     let timeout, again = false, nextCycle, halted = false;
 
     function pump(context) {
-      let { schedules, dao } = context, queue = [], next, now = new Date();
+      let { schedules, dao } = context, queue = [], next, now = new Date(), today = zeroDate();
 
       if (nextCycle) clearTimeout(nextCycle);
 
@@ -162,7 +164,6 @@ module.exports = function(cfg, log) {
       for (let i = 0; i < context.stats.length; i++) {
         let s = context.stats[i];
 
-        if (!s.next) { console.log('no next?', s); } // get next time?
         if (s.next) {
           if (s.next <= now) { // stat is time eligible
             context.fireStat(s);
@@ -186,7 +187,11 @@ module.exports = function(cfg, log) {
           if (j.status >= 0 || j.held) continue; // skip non-pending orders
 
           if (!j.next) {
-            j.next = nextTime(zeroDate(), j, isEmptyObject(j.entry.schedule) ? (j.entry.job || {}).schedule : j.entry.schedule);
+            j.next = nextTime(s.target, j, isEmptyObject(j.entry.schedule) ? (j.entry.job || {}).schedule : j.entry.schedule, j.lastScheduleRun);
+          }
+          // if the schedule is older than today, the job is time eligible
+          if (!j.next && s.target < today) {
+            j.next = now;
           }
           if (j.next) {
             if (j.next <= now) { //job is time eligible
@@ -195,12 +200,15 @@ module.exports = function(cfg, log) {
                 queue.push(j);
               }
             } else {
+              if (!j.eligibleAt) dao.jobReady(j, j.next).then(() => j.eligibleAt = j.next);
+
               // find the next closest time to pump
               if (!next || j.next < next) next = j.next;
             }
           } else {
             // remove, cause it won't be eligible? why would this happen?
-            drop.remove(i);
+            drop.push(i);
+            log.job.info(`Dropping job ${j.id} because it has no next scheduled time.`);
           }
         }
 
@@ -221,12 +229,16 @@ module.exports = function(cfg, log) {
       return acquireResources(context, queue).then(() => {
         // schedule next pump - default to 10 minutes out if there is nothing to bump
         if (!next) next = addTime(now, pumpMax);
+        else if (+next - +now > pumpMax * 1000) next = addTime(now, pumpMax);
+
         log.schedule.trace(`Scheduling next cycle for ${Math.floor((next - now) / 1000)}s`);
         nextCycle = setTimeout(() => last(context), next - now);
       }, err => {
         log.schedule.error(`Failed while acquiring resources`, err);
         // schedule next pump - default to 10 minutes out if there is nothing to bump
         if (!next) next = addTime(now, pumpMax);
+        else if (+next - +now > pumpMax * 1000) next = addTime(now, pumpMax);
+
         log.schedule.trace(`Scheduling next cycle for ${Math.floor((next - now) / 1000)}s`);
         nextCycle = setTimeout(() => last(context), next - now);
       });
@@ -298,12 +310,12 @@ module.exports = function(cfg, log) {
         let as = matchingAgents(agents, j);
         if (as.length < 1) {
           // TODO: message and unschedule?
-          log.job.trace(`No agent found for ${j.id}`, agents, j.config);
+          log.job.trace(`No agent found for ${j.id}`);
           return next();
         }
 
         // no resources to acquire
-        if (isEmptyObject(j.config.resources)) {
+        if (isEmptyObject((j.config || {}).resources)) {
           return _fireJob(context, j, as[rand(as.length - 1)]).then(next, next);
         }
 
@@ -314,7 +326,7 @@ module.exports = function(cfg, log) {
           return dao.acquireResources(j.config.resources || {}, resources).then(() => {
             return _fireJob(context, j, a).then(next, next);
           }, err => {
-            log.job.info(`Failed to acquire resources for ${j.id}`);
+            log.job.info(`Failed to acquire resources for ${j.id}`, err);
             return next();
           });
         } else {
@@ -331,7 +343,7 @@ module.exports = function(cfg, log) {
               return dao.acquireResources(res, resources).then(() => {
                 return _fireJob(context, j, a).then(next, next);
               }, err => {
-                log.job.info(`Failed to acquire resources for ${j.id} on ${a.name}`);
+                log.job.info(`Failed to acquire resources for ${j.id} on ${a.name}`, err);
                 return step();
               });
             } else return next(); // couldn't find a suitable agent and acquire resources
@@ -367,7 +379,7 @@ module.exports = function(cfg, log) {
   }
 
   function hasLocalResources(job) {
-    let res = job.config.resources || {};
+    let res = (job.config || {}).resources || {};
     for (let k in res) {
       if (k.indexOf('$AGENT') !== -1) return true;
     }

@@ -13,6 +13,7 @@ const log = (function() {
   general.job = l(`${prefix}job`, 'trace');
   general.schedule = l(`${prefix}schedule`, 'trace');
   general.data = l(`${prefix}data`, 'info');
+  general.api = l(`${prefix}api`, 'info');
 
   return general;
 })();
@@ -42,6 +43,9 @@ function logError(err) { log.error(err); }
 
 // TODO: refresh API that only pulls jobs with setups updated since last check?
 
+// TODO: make sure that refresh pulls new on-demand orders and doesn't reschedule already scheduled entries
+//       also make sure that cancelled jobs get pulled from the queue as appropriate
+
 module.exports = function(cfg) {
   if (cfg) config.merge(prefix, cfg);
 
@@ -49,13 +53,15 @@ module.exports = function(cfg) {
     return Promise.reject(new Error('No data module specified.'));
   }
 
+  if (config.get('process.name') !== false) process.title = config.get('process.name', 'batchalyzer server');
+
   // load data module and init
   let dataConfig = config.get(`${prefix}.data.config`, {});
   dataConfig.log = log.data;
   return require(config.get(`${prefix}.data.module`))(dataConfig).then(dao => {
     // data is initialized
     // TODO: add a reload helper for loading config, etc changes
-    let clients = [], apis = [], webServer, socketServer, initedServer = false, clientCount = 0;
+    let clients = [], apis = [], webServer, socketServer, apiServer, initedServer = false, clientCount = 0, apiCount = 0;
     const port = config.get(`${prefix}.port`, 8080);
     const mount = config.get(`${prefix}.mount`, '/service/scheduler');
 
@@ -149,6 +155,14 @@ module.exports = function(cfg) {
           info.req.agent = agent;
           cb(true);
         }
+      } });
+
+      apiServer = new ws.Server({ server: webServer, path: '/api', verifyClient(info, cb) {
+        Promise.resolve(context.auth(this.req)).then(ok => {
+          cb(ok);
+        }, err => {
+          cb(false, 401, 'Authentication Failed');
+        });
       } });
 
       const app = koa();
@@ -287,6 +301,54 @@ module.exports = function(cfg) {
           c.on('error', err => log.server.warn(`Error from client ${c.id}`, err));
           fire('info');
         });
+
+      });
+
+      apiServer.on('connection', c => {
+        apis.push(c);
+        c.id = apiCount++;
+        log.api.info(`Got a new client ${c.id}.`);
+
+        // set up messaging helper
+        function fire(action, data) {
+          let obj = { action };
+          if (data) obj.data = data;
+          c.send(JSON.stringify(obj));
+        }
+
+        c.on('close', () => {
+          log.api.info(`Lost client ${c.id}.`);
+          apis.splice(apis.indexOf(c), 1);
+        });
+
+        c.on('message', data => {
+          let m;
+
+          try {
+            data = JSON.parse(data);
+          } catch (e) {
+            log.api.error(`Failed parsing message from ${c.id}.`);
+            return;
+          }
+
+          switch (data.action) {
+            case 'refresh':
+              log.api.info(`Reloading...`);
+              reload().then(() => {
+                pump(context);
+                fire('refresh', { ok: true });
+              }, err => {
+                fire('refresh', { ok: false });
+              });
+              break;
+
+            default:
+              log.api.warn(`Got an unknown message from ${c.id}`);
+              break;
+          }
+        });
+
+        c.on('error', err => log.api.warn(`Error from client ${c.id}`, err));
       });
 
       function missingCheck() {
@@ -344,8 +406,8 @@ function setup(context, date) {
   date = zeroDate(date);
 
   let { dao } = context, schedules = {};
-  return dao.activeSchedules().then(as => {
-    let cur = false;
+  return dao.activeSchedules({ allOrders: true }).then(as => {
+    let cur = false, oj;
     // TODO: pull in-mem details from old schedule if there is one?
     as.forEach(s => {
       s.targetDate = zeroDate(new Date(+s.target));
@@ -388,20 +450,23 @@ function newDay(context) {
       let orders = [], map = {};
       for (let i = 0; i < es.length; i++) {
         let e = es[i];
-        let next = nextTime(date, e, e.schedule || (e.job || {}).schedule);
+        let next = nextTime(date, e, e.schedule || (e.job || {}).schedule, date);
         if (next && (!e.lastRun || e.lastRun < next)) {
           orders.push({ entryId: e.id, next, status: -1 });
           map[e.id] = e;
+          e.next = next;
         }
       }
 
       return dao.newSchedule(sched, orders).then(s => {
+        // TODO: on first run, s is undefined
         let os = s.jobs;
         for (let i = 0; i < os.length; i++) {
-          let e = map[os[i].entryId];
-          if (!e) continue;
-          os[i].next = e.next;
-          if ('intervalIndex' in e) os[i].intervalIndex = e.intervalIndex;
+          let o = os[i], e = map[o.entryId];
+          if (e) {
+            os[i].next = e.next;
+            if ('intervalIndex' in e) os[i].intervalIndex = e.intervalIndex;
+          }
         }
         context.schedules[s.id] = s;
         return s;
@@ -426,19 +491,27 @@ function scheduleNewDay(context) {
 }
 
 function refreshSchedule(context, s) {
-  let { dao } = context, date = new Date();
+  let { dao } = context, date = new Date(s.target);
 
-  return dao.entries().then(es => {
+  return dao.entries({ date }).then(es => {
     let orders = [];
-    outer: for (let i = 0; i < es.length; i++) {
-      let e = es[i];
+    for (let i = 0; i < es.length; i++) {
+      let e = es[i], matches = [];
       for (let j = 0; j < s.jobs.length; j++) {
-        if (s.jobs[j].entryId === e.id && s.jobs[j].status < 0) continue outer;
+        let o = s.jobs[j];
+        if (o.entryId === e.id && o.status < 0) {
+          if (!o.next && o.eligibleAt) o.next = o.eligibleAt;
+          else if (!o.next) o.next = nextTime(date, e, e.schedule || (e.job || {}).schedule, date);
+          matches.push(o);
+        }
       }
+      matches.forEach(o => o.entry.lastScheduleRun = e.lastScheduleRun);
+      if (matches.length > 0) continue;
 
       let time = nextTime(date, e, e.schedule || (e.job || {}).schedule);
-      if (time && (!e.lastRun || e.lastRun < time)) {
-        orders.push({ entryId: e.id, next: time, status: -1, entry: e });
+      if (time) {
+        log.schedule.trace(`Ordering missing entry ${e.id} on ${s.target}.`);
+        orders.push({ entryId: e.id, eligibleAt: time, next: time, status: -1, entry: e });
       }
     }
 
@@ -460,21 +533,34 @@ function refreshSchedule(context, s) {
 }
 
 function expireSchedules(context) {
-  let { dao, schedules } = context, deactivate = [], target = zeroDate(+(new Date()) - (86400000 * context.keepDone));
-  sched: for (let k in schedules) {
-    const s = schedules[k];
-    for (let i = 0; i < s.jobs.length; i++) {
-      if (s.jobs[i].next) continue sched;
+  let { dao, schedules } = context, deactivate = [], activate = [], target = zeroDate(+(new Date()) - (86400000 * context.keepDone));
+  return dao.liveSchedules().then(ss => {
+    let sids = {};
+    for (let i = 0; i < ss.length; i++) sids[ss[i].id] = ss[i];
+    for (let k in schedules) {
+      if (!(k in sids)) {
+        deactivate.push(schedules[k]);
+      }
     }
-    deactivate.push(s);
-  }
+    for (let k in sids) {
+      if (!(k in schedules)) {
+        activate.push(sids[k]);
+      }
+    }
 
-  for (let i = deactivate.length - 1; i >= 0; i--) {
-    if (deactivate[i].target >= target) deactivate.splice(i, 1);
-  }
+    for (let i = deactivate.length - 1; i >= 0; i--) {
+      if (deactivate[i].target >= target) deactivate.splice(i, 1);
+    }
 
-  if (deactivate.length > 0) return context.dao.deactivateSchedules(deactivate);
-  else return Promise.resolve(true);
+    if (deactivate.length > 0 || activate.length > 0) return context.dao.deactivateSchedules(deactivate, activate).then(() => [deactivate, activate]);
+    else return Promise.resolve(false);
+  }).then(res => {
+    if (res) {
+      let [ds, as] = res;
+      ds.forEach(s => delete schedules[s.id]);
+      as.forEach(s => schedules[s.id] = s);
+    }
+  });
 }
 
 function missingAgents(context) {

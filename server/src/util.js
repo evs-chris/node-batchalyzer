@@ -32,14 +32,12 @@ function deepAssign(dest, ...srcs) {
   return dest;
 }
 
-function nextTime(target, obj, schedule) {
-  let now = new Date();
-  if (target > now || target.getDate() !== now.getDate()) return; // not the right day
+function nextTime(target, obj, schedule, start) {
+  let now = start || new Date();
+  if (target > now || target.getDate() !== now.getDate() && !(schedule.CRON || {}).important) return; // not the right day
 
   if (schedule.time) {
-    let dt = new Date(schedule.time);
-    if (dt > now && zeroDate(dt) == zeroDate(now)) return now;
-    else return;
+    return new Date(schedule.time);
   } else if (schedule.fuzzy) {
     // fuzzy times, like last wednesday of every month, etc
     // TODO: support fuzzy times
@@ -47,9 +45,9 @@ function nextTime(target, obj, schedule) {
   } else if (schedule.CRON) {
     // TODO: support other aliases
     let c = schedule.CRON;
-    if ('M' in c && !inRange(c.M, now.getMonth() + 1)) return;
-    if ('d' in c && !inRange(c.d, now.getDate() + 1)) return;
-    if ('w' in c && !inRange(c.w, now.getDay())) return;
+    if ('M' in c && !inRange(now.getMonth() + 1, c.M)) return;
+    if ('d' in c && !inRange(now.getDate() + 1, c.d)) return;
+    if ('w' in c && !inRange(now.getDay(), c.w)) return;
 
     if (!schedule.interval) {
       let offset = 0, overflow;
@@ -68,14 +66,16 @@ function nextTime(target, obj, schedule) {
         offset += next * 60 * 60 * 1000;
       }
 
-      return new Date(+zeroDate(now) + offset);
+      let tm = new Date(+zeroDate(now) + offset);
+      if (tm > now) return tm;
+      else return;
     }
   }
 
   // check to see if it's an interval (possibly in addition to something else)
   if (schedule.interval) {
     // interval pattern - initialoffset,interval || initialoffset[, next offset... resets to interval at end of list]
-    let offsets = ('' + schedule.interval).split(',').map(t => +t);
+    let offsets = Array.isArray(schedule.interval) ? schedule.interval : ('' + schedule.interval).split(',').map(t => +t);
     if (offsets.length < 1) return;
     if (obj.intervalIndex === undefined) {
       obj.intervalIndex = 1;
@@ -104,7 +104,7 @@ function inRange(value, range) {
     for (let i = 0; i < range.length; i++) {
       if (range[i] === undefined || range[i] === null) continue;
       if (range[i] === '*') return true;
-      else if (('' + range[i]).indexOf('-')) {
+      else if (('' + range[i]).indexOf('-') !== -1) {
         let [min, max] = ('' + range[i]).replace(/\s*/g, '').split('-').map(n => +n);
         if (value >= min && value <= max) return true;
       } else if (value === +range[i]) return true;

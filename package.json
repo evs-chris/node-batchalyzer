@@ -3,12 +3,23 @@
   "version": "0.0.1",
   "private": true,
   "dependencies": {
-    "server": "./server",
-    "data": "./data-pg",
-    "agent": "./agent"
+    "ws": "^0",
+    "flapjacks": "^0",
+    "blue-ox": "^0",
+    "sander": "^0",
+    "pg.js": "^4",
+    "postgres-gen-dao": "^0",
+    "postgres-gen": "^0",
+    "postgres-gen-migrate": "^0",
+    "koa": "^1",
+    "koa-route": "^2",
+    "co-body": "^4",
+    "basic-auth": "^1",
+    "koa-sendfile": "^1"
   },
   "devDependencies": {
     "gobble": "^0.10.2",
-    "gobble-babel": "^5.5.8"
+    "gobble-babel": "^5.5.8",
+    "gobble-rollup-babel": "^0.6.1"
   }
 }

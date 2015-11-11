@@ -15,8 +15,9 @@ module.exports = function(cfg, log) {
   function doMessage(msg, details, check) {
     let m;
 
-    if (check) {
-      // look up message based on details
+    if (!check) {
+      delete msg.id;
+      delete msg.handle;
     }
 
     if (!m) {
