@@ -2,66 +2,296 @@
 <html>
   <head>
     <title>batchalyzer</title>
-    <script src="//cdn.ractivejs.org/edge/ractive.js"></script>
-    <script src="/js/xhr-as-promised.js"></script>
-    <script src="/js/config.js"></script>
-    <style>
-      div.list > div > div {
-        display: inline-block;
-      }
-
-      div.list > div > div.list {
-        display: block;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="js/lodash.min.js"></script>
+    <script src="js/ractive.min.js"></script>
+    <script src="js/xhr-as-promised.js"></script>
+    <script>var xhr = XHRAsPromised['default']({});</script>
+    <script src="js/config.js"></script>
+    <script src="js/ace.js"></script>
+    <link rel="stylesheet" type="text/css" href="css/fonts.css" />
+    <link rel="stylesheet" type="text/css" href="css/pure-min.css" />
+    <link rel="stylesheet" type="text/css" href="css/index.css" />
   </head>
   <body>
-    <div id="main"></div>
+    <main></main>
+    <div id="editor"></div>
     <script id="tpl" type="text/html">
-      <button on-click="refresh()">Refresh</button>
-      <h2>Messages</h2>
-      <div class="messages list">
-        {{#each messages}}
-          <div class="message">
-            <div>{{.message}}</div>
-          </div>
-        {{/each}}
+      <div class="topbar">
+        <div class="left">
+          <button style="margin-right: 0.5em; line-height: 0;" class="pure-button" on-click="toggle('settings.expandMessages')"><span class="flip{{#if settings.expandMessages}} flipped{{/if}}">&#9660;</span></button>
+          {{~/messages.length}} Message{{~/messages.length === 1 ? '' : 's'}}
+        </div>
+        <div class="middle" on-dblclick="set('blocked', true)">{{~/config.name}}</div>
+        <div class="right">
+          <button class="pure-button pure-button-primary" on-click="refreshMessages()"><span class="icon">&#10227;</span></button>
+          <button class="pure-button pure-button-primary" on-click="refresh()"><span class="icon">&#10227;</span> All</button>
+        </div>
       </div>
 
-      <h2>Agents</h2>
-      <div class="agents list">
-        {{#each agents}}
-          <div class="agent {{#if .status === -1}}disabled{{elseif .status === 0}}offline{{elseif .status === 1}}online{{elseif .status === 2}}stale{{/if}}">
-            <div>{{.name}}</div>
-            <div>{{#if .status === -1}}Disabled{{elseif .status === 0}}Offline{{elseif .status === 1}}Online{{elseif .status === 2}}Stale{{/if}}</div>
-          </div>
-        {{/each}}
+      <div id="blocker" class="{{#if ~/blocked}}active{{/if}}">
+        <div id="blocker-close" on-click="blockerClose">&#x274c;</div>
+        {{>'blocker'}}
       </div>
 
-      <h2>Resources</h2>
-      <div class="resources list">
-        {{#each resources}}
-          <div class="resource">
-            <div>{{.name}}</div>
-          </div>
-        {{/each}}
-      </div>
-
-      <h2>Schedules</h2>
-      <div class="schedules list">
-        {{#each schedules}}
-          <div class="schedule">
-            <div>{{~/filter.dateString(.target)}}</div>
-            <div class="sub list jobs">
-              {{#each .jobs}}
-                <div class="job {{#if .status === -2}}schedule{{elseif .status === -1}}resource{{elseif .status === 0}}done{{elseif .status === 1}}failed{{elseif .status === 2}}warn{{else}}unknown{{/if}}">
-                  <div>{{.id}}</div>
-                  <div>{{.entry.config.name || (.entry.job || {}).name || .config.cmd}}</div>
-                </div>
-              {{/each}}
+      <div id="main" class="flex">
+        <div class="messages{{#if ~/settings.expandMessages}} expanded{{/if}}">
+          <div class="list striped">
+            <div class="header">
+              <div class="primary">Message</div>
+              <div style="width: 5em;">Priority</div>
+              <div style="width: 7em;">Status</div>
+              <div style="width: 7em;">Agent</div>
             </div>
+            {{#each ~/messages}}
+              <div class="message" on-dbltap-dblclick="openMessage:{{.}}">
+                <div class="primary">{{.message}}</div>
+                <div style="width: 5em;">{{.priority}}</div>
+                <div style="width: 7em;">{{.status === 0 ? 'New' : .status === 1 ? 'Acknowledged' : .status === 2 ? 'Deferred' : 'Resolved'}}</div>
+                <div style="width: 7em;">{{#if .agentId && ~/agentMap}}{{(~/agents[~/agentMap[.agentId]] || {}).name || '<Unknown>'}}{{else}}{{ '<None>' }}{{/if}}</div>
+              </div>
+            {{else}}
+              <div><em>No messages</em></div>
+            {{/each}}
           </div>
-        {{/each}}
+        </div>
+
+        <div class="content flex">
+          <div class="tabs"><div>
+            <div class="tab{{#if ~/settings.tab === 'stats' || !~/settings.tab}} selected{{/if}}" on-click="set('settings.tab', 'stats')">Stats</div>
+            <div class="tab{{#if ~/settings.tab === 'schedules'}} selected{{/if}}" on-click="set('settings.tab', 'schedules')">Schedules</div>
+            <div class="tab{{#if ~/settings.tab === 'agents'}} selected{{/if}}" on-click="set('settings.tab', 'agents')">Agents</div>
+            <div class="tab{{#if ~/settings.tab === 'resources'}} selected{{/if}}" on-click="set('settings.tab', 'resources')">Resources</div>
+            <div class="tab{{#if ~/settings.tab === 'commands'}} selected{{/if}}" on-click="set('settings.tab', 'commands')">Commands</div>
+            <div class="tab{{#if ~/settings.tab === 'messages'}} selected{{/if}}" on-click="set('settings.tab', 'messages')">Recent Messages</div>
+            <div class="tab{{#if ~/settings.tab === 'utils'}} selected{{/if}}" on-click="set('settings.tab', 'utils')">Utilities</div>
+          </div></div>
+
+          <div class="content flex">
+            {{#if ~/settings.tab === 'stats' || !~/settings.tab}}
+              <div class="container">
+                <div class="tabs"><div>
+                  <div class="tab{{#if ~/settings.statsTab.tab === 'vals' || !~/settings.statsTab.tab}} selected{{/if}}" on-click="set('settings.statsTab.tab', 'vals')">Current</div>
+                  <div class="tab{{#if ~/settings.statsTab.tab === 'stats'}} selected{{/if}}" on-click="set('settings.statsTab.tab', 'stats')">Stats</div>
+                  <div class="tab{{#if ~/settings.statsTab.tab === 'defs'}} selected{{/if}}" on-click="set('settings.statsTab.tab', 'defs')">Definitions</div>
+                </div></div>
+                <div class="content flex">
+                  {{#if ~/settings.statsTab.tab === 'vals' || !~/settings.statsTab.tab}}
+                    <div class="actions">
+                      <button class="pure-button pure-button-primary" on-click="refreshStats()"><span class="icon">&#10227;</span></button>
+                    </div>
+                    <div class="stat-values list striped">
+                      {{#each ~/statValues}}
+                        <div class="stat">
+                          <div>{{.name}}</div>
+                        </div>
+                      {{/each}}
+                    </div>
+                  {{/if}}
+
+                  {{#if ~/settings.statsTab.tab === 'stats'}}
+                    <div class="actions">
+                      <button class="pure-button pure-button-primary" on-click="refreshStats()"><span class="icon">&#10227;</span></button>
+                    </div>
+                    <div class="list striped">
+                      <div class="header"></div>
+                      {{#each ~/stats}}
+                        <div>
+                          <div>{{.id}}</div>
+                        </div>
+                      {{/each}}
+                    </div>
+                  {{/if}}
+
+                  {{#if ~/settings.statsTab.tab === 'defs'}}
+                    <div class="actions">
+                      <button class="pure-button pure-button-primary" on-click="refreshStatDefs()"><span class="icon">&#10227;</span></button>
+                    </div>
+                    <div class="list striped">
+                      <div class="header"></div>
+                      {{#each ~/statDefs}}
+                        <div>
+                          <div>{{.id}}</div>
+                        </div>
+                      {{/each}}
+                    </div>
+                  {{/if}}
+                </div>
+              </div>
+            {{/if}}
+
+            {{#if ~/settings.tab === 'schedules'}}
+              <div class="container">
+                <div class="tabs"><div>
+                  <div class="tab{{#if ~/settings.schedulesTab.tab === 'active' || !~/settings.schedulesTab.tab}} selected{{/if}}" on-click="set('settings.schedulesTab.tab', 'active')">Active</div>
+                  <div class="tab{{#if ~/settings.schedulesTab.tab === 'entries'}} selected{{/if}}" on-click="set('settings.schedulesTab.tab', 'entries')">Entries</div>
+                  <div class="tab{{#if ~/settings.schedulesTab.tab === 'jobs'}} selected{{/if}}" on-click="set('settings.schedulesTab.tab', 'jobs')">Jobs</div>
+                </div></div>
+
+                <div class="content flex">
+                  {{#if ~/settings.schedulesTab.tab === 'active' || !~/settings.schedulesTab.tab}}
+                  <div>
+                    <div class="actions">
+                      <button class="pure-button pure-button-primary" on-click="refreshSchedules()"><span class="icon">&#10227;</span></button>
+                    </div>
+                    <div class="schedules">
+                      {{#each ~/schedules}}
+                        <div class="schedule">
+                          <h3 class="title">{{~/filter.dateString(.target)}}</h3>
+                          <div class="sub list jobs striped">
+                            <div class="header"><div class="size-1-4">Job</div><div class="size-1-4">Agent</div><div class="size-1-8">Status</div><div class="size-1-4">Time</div><div style="width: 2em;" /></div>
+                            {{#each .jobs}}
+                              <div class="job {{#if .status === -2}}schedule{{elseif .status === -1}}resource{{elseif .status === 0}}done{{elseif .status === 1}}failed{{elseif .status === 2}}warn{{else}}unknown{{/if}}" on-dblclick-dbltap="openOrder:{{.}}">
+                                <div class="size-1-4">{{~/orderName(.)}}</div>
+                                <div class="size-1-4">{{~/agentName(.)}}</div>
+                                <div class="size-1-8">
+                                  {{#if .status === 10}}Running
+                                  {{elseif .status < 0}}Pending
+                                  {{elseif .status === 0}}Complete
+                                  {{elseif .status === 3}}Cancelled
+                                  {{elseif .status < 3}}Failed
+                                  {{else}}Unknown{{/if}}
+                                </div>
+                                <div class="size-1-4">
+                                  {{~/filter.timestamp(.status < 0 ? .eligibleAt : .status === 10 ? .startedAt : .completedAt)}}
+                                </div>
+                                <div style="width: 2em;">
+                                  {{#if .held}}&#9995;{{/if}}
+                                  {{#if .onDemand}}&#9823;{{/if}}
+                                </div>
+                              </div>
+                            {{/each}}
+                          </div>
+                        </div>
+                      {{/each}}
+                    </div>
+                  </div>
+                  {{/if}}
+
+                  {{#if ~/settings.schedulesTab.tab === 'entries'}}
+                    <div class="actions">
+                      <button class="pure-button pure-button-primary" on-click="refreshEntries()"><span class="icon">&#10227;</span></button>
+                    </div>
+                    <div class="entries list striped">
+                      <div class="header">
+                        <div style="width: 7em;">Custom ID</div>
+                        <div style="width: 5em;">Priority</div>
+                        <div class="primary">Name</div>
+                      </div>
+                      {{#each ~/entries}}
+                        <div class="entry" on-dblclick-dbltap="openEntry:{{.}}">
+                          <div style="width: 7em;">{{.customId}}</div>
+                          <div style="width: 5em;">{{.priority}}</div>
+                          <div class="primary">{{~/orderName(.)}}</div>
+                        </div>
+                      {{/each}}
+                    </div>
+                  {{/if}}
+
+                  {{#if ~/settings.schedulesTab.tab === 'jobs'}}
+                    <div class="actions">
+                      <button class="pure-button pure-button-primary" on-click="refreshJobs()"><span class="icon">&#10227;</span></button>
+                    </div>
+                    <div class="jobs list striped">
+                      <div class="header">
+                        <div style="width: 7em;">Custom ID</div>
+                        <div style="width: 5em;">Priority</div>
+                        <div style="width: 8em;">Name</div>
+                      </div>
+                      {{#each ~/jobs}}
+                        <div class="job" on-dblclick-dbltap="openJob:{{.}}">
+                          <div style="width: 7em;">{{.customId}}</div>
+                          <div style="width: 5em;">{{.priority}}</div>
+                          <div style="width: 8em;">{{~/orderName(.)}}</div>
+                        </div>
+                      {{/each}}
+                    </div>
+                  {{/if}}
+                </div>
+              </div>
+            {{/if}}
+
+            {{#if ~/settings.tab === 'agents'}}
+              <div>
+                <div class="actions">
+                  <button class="pure-button pure-button-primary" on-click="refreshAgents()"><span class="icon">&#10227;</span></button>
+                </div>
+                <div class="agents list striped">
+                  <div class="header"><div class="primary">Agent</div><div style="width: 7em;">Status</div></div>
+                  {{#each agents}}
+                    <div class="agent {{#if .status === -1}}disabled{{elseif .status === 0}}offline{{elseif .status === 1}}online{{elseif .status === 2}}stale{{/if}}" on-dblclick-dbltap="openAgent:{{.}}">
+                      <div class="primary">{{.name}}</div>
+                      <div style="width: 7em;">{{#if .status === -1}}Disabled{{elseif .status === 0}}Offline{{elseif .status === 1}}Online{{elseif .status === 2}}Stale{{/if}}</div>
+                    </div>
+                  {{/each}}
+                </div>
+              </div>
+            {{/if}}
+
+            {{#if ~/settings.tab === 'resources'}}
+              <div>
+                <div class="actions">
+                  <button class="pure-button pure-button-primary" on-click="refreshResources()"><span class="icon">&#10227;</span></button>
+                </div>
+                <div class="resources list striped">
+                  <div class="header">
+                    <div class="primary">Name</div><div style="width: 4em;">Used</div><div style="width: 4em;">Total</div>
+                  </div>
+                  {{#each resources}}
+                    <div class="resource">
+                      <div class="primary">{{.name}}</div>
+                      <div class="number" style="width: 4em;">{{.used}}</div>
+                      <div class="number" style="width: 4em;">{{.total}}</div>
+                    </div>
+                  {{/each}}
+                </div>
+              </div>
+            {{/if}}
+
+            {{#if ~/settings.tab === 'commands'}}
+              <div class="actions">
+                <button class="pure-button pure-button-secondary" on-click="openCommand:{{ {} }}">New</button>
+                <button class="pure-button pure-button-primary" on-click="refreshCommands()"><span class="icon">&#10227;</span></button>
+              </div>
+              <div class="list striped">
+                <div class="header"><div class="primary">Label</div><div style="width: 5em;">Version</div><div style="width: 8em;">Name</div></div>
+                {{#each ~/commands}}
+                  <div class="command" on-dblclick-dbltap="openCommand:{{.}}">
+                    <div class="primary">{{.label}}</div><div style="width: 5em;">{{.version}}</div><div style="width: 8em;">{{.name}}</div>
+                  </div>
+                {{/each}}
+              </div>
+            {{/if}}
+
+            {{#if ~/settings.tab === 'messages'}}
+              <div class="actions">
+                <button class="pure-button pure-button-primary" on-click="refreshRecentMessages()"><span class="icon">&#10227;</span></button>
+              </div>
+              <div class="list striped">
+                <div class="header">
+                  <div class="primary">Message</div>
+                  <div style="width: 5em;">Priority</div>
+                  <div style="width: 7em;">Status</div>
+                  <div style="width: 7em;">Agent</div>
+                </div>
+                {{#each ~/recentMessages}}
+                  <div class="message" on-dbltap-dblclick="openMessage:{{.}}">
+                    <div class="primary">{{.message}}</div>
+                    <div style="width: 5em;">{{.priority}}</div>
+                    <div style="width: 7em;">{{.status === 0 ? 'New' : .status === 1 ? 'Acknowledged' : .status === 2 ? 'Deferred' : 'Resolved'}}</div>
+                    <div style="width: 7em;">{{#if .agentId && ~/agentMap}}{{(~/agents[~/agentMap[.agentId]] || {}).name || '<Unknown>'}}{{else}}{{ '<None>' }}{{/if}}</div>
+                  </div>
+                {{/each}}
+              </div>
+            {{/if}}
+
+            {{#if ~/settings.tab === 'utils'}}
+              <div>
+                <button on-click="reloadServer" class="pure-button pure-button-primary">Reload Configurations on Server</button>
+              </div>
+            {{/if}}
+          </div>
+        </div>
       </div>
     </script>
     <script type="text/javascript" src="/js/index.js"> </script>

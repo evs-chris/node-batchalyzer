@@ -1,0 +1,432 @@
+* {
+  font-family: "Roboto";
+}
+
+div.list > div > div {
+  padding: 0.2em;
+}
+div.list > div {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  box-sizing: border-box;
+  padding: 0.3em;
+  flex-wrap: wrap;
+}
+div.list > div.middle {
+  align-items: center;
+}
+div.list > div.header {
+  font-weight: 500;
+}
+div.list.striped > div:nth-child(even) {
+  background-color: rgba(0, 120, 231, 0.1);
+}
+div.list.striped > div.selected,
+div.list > div.selected {
+  background-color: rgba(0, 120, 231, 0.2);
+}
+div.list > div > div.list {
+  display: block;
+}
+div.flex > div.primary,
+div.list > div > div.primary {
+  flex-grow: 10;
+}
+div.list > div > div.number {
+  text-align: right;
+}
+div.list > div > .size-1-4,
+div.list > div > .size-1-8 {
+  flex-grow: 2;
+}
+div.list > div > .size-1-4 {
+  max-width: 25%;
+}
+div.list > div > .size-1-8 {
+  max-width: 12.5%;
+}
+
+div.content {
+  flex-grow: 10;
+}
+
+div.flex {
+  display: flex;
+  flex-direction: column;
+}
+div.flex.columns {
+  flex-direction: row;
+}
+
+div.container {
+  margin: 0.5em;
+}
+
+h3.title {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.3);
+  padding-bottom: 0.2em;
+  margin-bottom: 0.5em;
+}
+
+div.actions {
+  text-align: right;
+  padding: 0.5em;
+  box-sizing: border-box;
+}
+
+/* pure adjustments */
+.pure-button {
+  padding: 0.4em 0.5em;
+  border-radius: 0.2em;
+  height: 2em;
+}
+.pure-button > .icon {
+  font-size: 1.5em;
+  line-height: 0.75em;
+}
+
+.pure-form input:not([type]) {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.pure-form > div.title {
+  background-color: rgba(0, 120, 231, 0.8);
+  color: #fff;
+  padding: 0.3em;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1.2em;
+  border-radius: 4px 4px 0 0;
+  border-bottom: 1px solid #999;
+}
+.pure-form.error > div.title {
+  background-color: red;
+}
+.pure-form > div.title + div {
+  min-height: 1.5em;
+}
+
+.pure-form > div.buttons {
+  position: absolute;
+  height: 2.3em;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid #999;
+  background-color: #fefefe;
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  border-radius: 0 0 4px 4px;
+  z-index: 10;
+}
+.pure-form .pre-buttons {
+  min-height: 2.3em;
+}
+.pure-form > div.buttons > * {
+  margin-right: 0.5em;
+}
+
+.pure-button-cancel {
+  color: #fff;
+  background-color: #ff2929;
+}
+
+.pure-button-secondary {
+  color: #fff;
+  background-color: #32C850;
+}
+
+.pure-form label.field {
+  display: inline-block;
+  vertical-align: middle;
+  font-size: 0.8em;
+  margin: 0.1em 0.2em;
+}
+.pure-form label.field > input:not([type=checkbox]):not([type=radio]) {
+  display: block;
+}
+.pure-form label.field div.button-group {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+  margin-bottom: 0.1em;
+}
+.pure-form label.field div.button-group > button {
+  height: 1.5em;
+  line-height: 0;
+}
+.pure-form label.field.check {
+  vertical-align: bottom;
+  margin-bottom: 0.6em;
+}
+.pure-form label.field.check > input {
+  height: 1.5em;
+  width: 1.5em;
+  vertical-align: middle;
+}
+.pure-form label.field.text {
+  display: block;
+}
+.pure-form label.field.text > textarea {
+  display: block;
+  width: 100%;
+  min-height: 10em;
+}
+
+/* layout */
+div.topbar {
+  position: fixed;
+  top: 0;
+  height: 40px;
+  font-size: 0.8em;
+  color: #fff;
+  background-color: #000;
+  box-sizing: border-box;
+  padding: 0.5em;
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  z-index: 101;
+}
+div.topbar > .middle {
+  flex-grow: 10;
+  text-align: center;
+}
+
+div#blocker {
+  position: fixed;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  opacity: 0;
+  transition: opacity 0.3s ease-in-out, z-index 0s linear 0.3s;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 1em;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+}
+div#blocker.active {
+  z-index: 200;
+  opacity: 1;
+  transition: opacity 0.3s ease-in-out, z-index 0s linear;
+}
+div#blocker > #blocker-close {
+  font-weight: 700;
+  color: #fff !important;
+  background-color: rgba(0, 0, 0, 0);
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
+  position: absolute;
+  z-index: 100;
+  right: 1em;
+  top: 1em;
+  cursor: pointer;
+  margin: 0;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+div#blocker > *:not(#blocker-close) {
+  background-color: #fff;
+  border-radius: 4px;
+  border-bottom: 3px solid #0078e7;
+  box-shadow: 0 0 0.5em #003C73;
+  flex-shrink: 10;
+  padding: 0.5em;
+  position: relative;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+div#blocker > *:not(#blocker-close).error {
+  border-bottom: 3px solid red;
+}
+
+div#main {
+  margin: 40px 1em 0 1em;
+  height: 100%;
+}
+
+div#main > div.content >  div.tabs {
+ padding: 1em 0 0.5em 0;
+}
+div.tabs {
+  padding: 0.5em 0;
+}
+div.tabs > div {
+  position: relative;
+  cursor: pointer;
+}
+div.tabs > div:after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  width: 100%;
+  border-bottom: 2px solid rgba(0, 0, 0, 0.1);
+}
+div.tabs > div > .tab {
+  display: inline-block;
+  position: relative;
+  margin: 0 1em 0 0;
+  cursor: pointer;
+}
+div.tabs > div > .tab:after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 0;
+  bottom: -2px;
+  opacity: 0;
+  transition: left 0.5s ease-in-out, width 0.5s ease-in-out, opacity 0.5s ease-in-out;
+  border-bottom: 2px solid #0078e7;
+}
+div.tabs > div > .tab.selected:after {
+  width: calc(100% + 1em);
+  left: -0.5em;
+  opacity: 1;
+}
+
+div.messages {
+  top: -100%;
+  box-sizing: border-box;
+  transition: top 0.7s ease-in, box-shadow 0.5s ease-in-out 0.2s, border-bottom 0.1s linear 0.5s;
+  border-radius: 0 0 0.2em 0.2em;
+  border-bottom: 0px solid #000;
+  box-shadow: 0 0 0.5em rgba(0, 0, 0, 0.0);
+  overflow: hidden;
+  z-index: 100;
+  background-color: #fff;
+  position: fixed;
+  left: 1.5em;
+  right: 1.5em;
+}
+div.messages.expanded {
+  overflow: auto;
+  top: 40px;
+  border-bottom: 3px solid #0078e7;
+  transition: top 0.7s ease-out, box-shadow 0.5s ease-in-out 0s, border-bottom 0s linear 0s;
+  box-shadow: 0 0 0.5em rgba(0, 0, 0, 0.7);
+}
+div.messages > .list {
+  margin: 1em;
+}
+
+/* grid */
+.l-1-2, .l-2-4, .l-3-6, .l-4-8, .l-1-3, .l-2-6, .l-2-3, .l-4-6,
+.l-1-4, .l-2-8, .l-3-4, .l-6-8, .l-1-5, .l-2-5, .l-3-5, .l-4-5,
+.l-1-6, .l-5-6, .l-1-8, .l-3-8, .l-5-8, .l-7-8 {
+  box-sizing: border-box;
+}
+.l-1-2, .l-2-4, .l-3-6, .l-4-8 { min-width: 50%; }
+.l-1-3, .l-2-6 { min-width: 33.33%; }
+.l-2-3, .l-4-6 { min-width: 66.66%; }
+.l-1-4, .l-2-8 { min-width: 25%; }
+.l-3-4, .l-6-8 { min-width: 75%; }
+.l-1-5 { min-width: 20%; }
+.l-2-5 { min-width: 40%; }
+.l-3-5 { min-width: 60%; }
+.l-4-5 { min-width: 80%; }
+.l-1-6 { min-width: 16.66%; }
+.l-5-6 { min-width: 83.33%; }
+.l-1-8 { min-width: 12.5%; }
+.l-3-8 { min-width: 37.5%; }
+.l-5-8 { min-width: 62.5%; }
+.l-7-8 { min-width: 87.5%; }
+
+/* widgets */
+.ace_editor span,
+.ace_editor div {
+  font: inherit !important;
+}
+
+#editor-config {
+  position: absolute;
+  bottom: 0.5em;
+  left: 0.5em;
+  height: 1em;
+  width: 1em;
+  opacity: 0.2;
+  transition: opacity 0.2s ease-in-out;
+  z-index: 20;
+  color: #fff;
+  cursor: pointer;
+}
+#editor-config:hover {
+  opacity: 1;
+}
+#editor-config > .options {
+  position: absolute;
+  bottom: 0;
+  left: 101%;
+  border: 1px solid #000;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+  padding: 0.5em;
+  width: 8em;
+  color: #000;
+  background-color: #fff;
+  cursor: normal;
+}
+#editor-config > .options > label {
+  display: block;
+}
+
+.flip {
+  transition: transform 0.5s ease-in-out;
+  transform: rotate(0deg);
+  display: inline-block;
+}
+.flip.flipped {
+  transform: rotate(-180deg);
+}
+
+/* tabs */
+
+
+/* small tablet and smaller */
+@media screen and (max-width: 48em) {
+  div#main {
+    margin: 40px 0.3em 0 0.3em;
+  }
+
+  div#blocker {
+    padding: 0.2em;
+  }
+  div#blocker > #blocker-close {
+    top: 0.5em;
+  }
+
+  div.tabs + div {
+    margin: 0;
+  }
+  div.tabs > div > .tab.selected:after {
+    left: 0;
+    width: 100%;
+  }
+  div.list > div > .size-1-4,
+  div.list > div > .size-1-8 {
+    max-width: 45%;
+    width: 45%;
+    box-sizing: border-box;
+  }
+
+  div.flex.columns {
+    flex-direction: column;
+  }
+
+  div.messages {
+    left: 0.5em;
+    right: 0.5em;
+  }
+}
