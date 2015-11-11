@@ -83,8 +83,26 @@ module.exports = function(cfg) {
         // Job related methods
         // -------------------
         // list all entries
-        entries() {
-          return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id`, { fetch: { job: '' } });
+        entries(options = {}) {
+          if (options.date) {
+            return dao.entries.query(
+              `with lasts as (select ROW_NUMBER() over (partition by entry_id order by completed_at desc) as rownum, entry_id, completed_at from orders o where o.schedule_id = (select id from schedules where ? >= target and ? <= target))
+              select e.*, @job.*, l.completed_at as done
+              from ${prefix}entries e
+                left join lasts l on l.entry_id = e.id and l.rownum = 1
+                left join @${prefix}jobs job on e.job_id = job.id`,
+              options.date,
+              options.date,
+              { fetch: { job: '' }, extra: { e(rec, res) {
+                res.lastScheduleRun = rec.done;
+              } } }
+            );
+          } else {
+            return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id`, { fetch: { job: '' } });
+          }
+        },
+        jobs() {
+          return dao.jobs.find();
         },
         orders(opts = {}) {
           let q = [''], join = '';
@@ -122,11 +140,17 @@ module.exports = function(cfg) {
         findEntry(id) {
           return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id where e.id = ?`, id, { fetch: { job: '' } }).then(es => es[0]);
         },
+        findCustomEntry(id) {
+          return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id where e.custom_id = ?`, id, { fetch: { job: '' } }).then(es => es[0]);
+        },
         putJob(job) {
           return dao.jobs.upsert(job);
         },
         putEntry(entry) {
           return dao.entries.upsert(entry);
+        },
+        dropEntry(entry) {
+          return dao.entries.del(entry);
         },
         putOrder(order) {
           return dao.orders.upsert(order);
@@ -158,6 +182,10 @@ module.exports = function(cfg) {
             return dao.orders.findOne('entry_id = ? and completed_at is not null order by completed_at desc limit 1', entry.id);
           }
         },
+        lastEntryOrders(entry, opts = {}) {
+          const limit = (typeof opts.limit === 'number' && opts.limit <= 40 && opts.limit > 0) ? opts.limit : 10;
+          return dao.orders.find(`entry_id = ? and completed_at is not null order by completed_at desc limit ${limit}`, entry.id ? entry.id : entry);
+        },
         // get list of all active orders by schedule
         activeSchedules(opts = {}) {
           if (!('allOrders' in opts) || opts.allOrders) {
@@ -177,6 +205,16 @@ module.exports = function(cfg) {
               { fetch: { jobs: [{ entry: { job: '' } }] } }
             );
           }
+        },
+        liveSchedules() {
+          return dao.schedules.query(
+            `with sched as (select @s.* from @${prefix}schedules s where (select count(id) from orders where status < 0 and schedule_id = s.id) > 0),
+            bits as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched) order by jobs.created_at desc),
+            lasts as (select ROW_NUMBER() over(partition by @:jobs.schedule_id, @:jobs.entry_id order by @:jobs.created_at desc) as rownum, bits.* from bits),
+            stuff as (select * from lasts where rownum = 1)
+            select sched.*, stuff.* from sched left join stuff on stuff.@:jobs.schedule_id = @:s.id`,
+            { fetch: { jobs: [{ entry: { job: '' } }] } }
+          );
         },
         findSchedule(date) {
           return dao.schedules.find('target >= ? and target <= ?', date, date);
@@ -199,9 +237,13 @@ module.exports = function(cfg) {
             ).then(ss => ss[0]);
           });
         },
-        deactivateSchedules(ss) {
-          if (ss && !Array.isArray(ss)) ss = [ss];
-          return db.nonQuery(`update ${prefix}schedules set active = false where id in ?`, [ss.map(s => s.id)]);
+        deactivateSchedules(ds, as = []) {
+          if (ds && !Array.isArray(ds)) ds = [ds];
+          if (as && !Array.isArray(as)) as = [as];
+          return db.transaction(function*(t) {
+            if (as && as.length > 0) yield db.nonQuery(`update ${prefix}schedules set active = true where id in ?`, [as.map(s => s.id)]);
+            return yield db.nonQuery(`update ${prefix}schedules set active = false where id in ?`, [ds.map(s => s.id)]);
+          });
         },
         resources() {
           return dao.resources.find();
@@ -216,7 +258,7 @@ module.exports = function(cfg) {
             yield t.nonQuery(`update ${prefix}resources set used = 0`);
 
             // find currently running job configs
-            let os = (yield t.query(`select e.config entry, j.config job, a.name from orders o join agents a on o.agent_id = a.id join entries e on o.entry_id = e.id left join jobs j on e.job_id = j.id where agent_id is not null and completed_at is null`, { t })).rows;
+            let os = (yield t.query(`select e.config entry, j.config job, a.name from orders o join agents a on o.agent_id = a.id join entries e on o.entry_id = e.id left join jobs j on e.job_id = j.id where agent_id is not null and completed_at is null and o.status = 10`, { t })).rows;
 
             let map = {};
             for (let i = 0; i < os.length; i++) {
@@ -326,8 +368,8 @@ module.exports = function(cfg) {
           });
         },
         // update the eligible timestamp
-        jobReady(order) {
-          return db.nonQuery(`update ${prefix}orders set eligible_at = ? where id = ?`, new Date(), order.id);
+        jobReady(order, target = new Date()) {
+          return db.nonQuery(`update ${prefix}orders set eligible_at = ? where id = ?`, target, order.id);
         },
         // update the start timestamp
         jobStart(order, agent) {
@@ -418,13 +460,21 @@ module.exports = function(cfg) {
             return true;
           });
         },
+        currentStats() {
+          return []
+          return dao.stats.query(
+            // fetch stats with last 10 values, avgs over last 7 days, current value, warning, crit, name, and agent name
+            ``
+          );
+
+        },
 
         // Message related methods
         // -----------------------
         // get active messages
         messages(opts = {}) {
           if (opts.all) {
-            return dao.messages.find('true = true order by updated_at desc limit ?', opts.limit || 100);
+            return dao.messages.find('status = 3 order by updated_at desc limit ?', opts.limit || 100);
           } else {
             return dao.messages.find('status < 3');
           }
@@ -446,6 +496,8 @@ module.exports = function(cfg) {
             if (!msg && !opts.message) throw new Error('No message found and no message provided to post.');
 
             if (!msg) msg = { message: opts.message, audit: [] };
+
+            for (let k in opts) if (opts[k] === msg[k]) delete opts[k];
 
             if ('status' in opts) audit.status = msg.status = opts.status;
             if ('message' in opts) msg.message = audit.message = opts.message;
@@ -477,6 +529,18 @@ module.exports = function(cfg) {
         },
         putCommand(cmd) {
           return dao.commands.upsert(cmd);
+        },
+        lastCommandVersion(name, version = 'latest') {
+          return db.transaction(function*(t) {
+            const cmd = (yield dao.commands.query(`select * from commands where name = ? order by version desc limit 1`, name, { t }))[0];
+            if (!cmd) return { version: 0, updated: null, versionUpdated: null };
+
+            if (version === 'latest') {
+              return { version: cmd.version, updated: cmd.updatedAt, versionUpdated: cmd.updatedAt };
+            } else {
+              return { version: cmd.version, updated: cmd.updatedAt, versionUpdated: ((yield dao.comands.query(`select * from commands where name = ? and version = ?`), name, version, { t })[0] || {}).updatedAt || null };
+            }
+          });
         }
       };
 
