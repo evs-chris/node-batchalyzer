@@ -329,7 +329,7 @@ function getStat(context, data) {
             context.getFire()('stat', { id: data.id, type: data.type, value: msg.value || 0, status: msg.status || '' });
             p.disconnect();
           });
-          p.send({ type: 'config', config: data.config || {} });
+          p.send(JSON.stringify({ type: 'config', config: data.config || {} }));
 
           p.on('exit', () => {
             if (timeout) clearTimeout(timeout);
@@ -457,8 +457,9 @@ function runJob(context, data) {
           }
 
           log.job.trace(`Got a message for ${data.cmd}`, msg);
-          switch (msg.message) {
+          switch (msg.type) {
             case 'previous':
+              msg.data = msg.data || {};
               msg.data.id = data.id;
               log.job.trace(`Requesting previous for ${data.id}`, msg.data);
               let pv = msg.data, ok, fail, pr = new Promise((y, n) => {
@@ -475,8 +476,8 @@ function runJob(context, data) {
               });
               context.previous[`${pv.id}_${pv.success}_${pv.fail}_${pv.other}`] = { ok, fail };
               pr.then(
-                o => p.send(JSON.stringify({ message: 'previous', previous: o })),
-                () => p.send(JSON.stringify({ message: 'previous' }))
+                o => p.send(JSON.stringify({ type: 'previous', previous: o })),
+                () => p.send(JSON.stringify({ type: 'previous' }))
               );
               context.getFire()('fetchPrevious', pv);
               break;
@@ -497,7 +498,7 @@ function runJob(context, data) {
               break;
           }
         });
-        p.send(JSON.stringify({ message: 'config', config: data.config || {} }));
+        p.send(JSON.stringify({ type: 'config', config: data.config || {} }));
 
         p.on('exit', (code, sig) => {
           log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
@@ -597,7 +598,7 @@ function loadCommand(context, cmd) {
   }, () => {
     return sander.stat(base).then(
       () => true,
-        () => {
+      () => {
         log.command.info(`New command ${cmd.name}/${cmd.version} is being set up.`);
         sander.writeFileSync(base, lock, '');
         let wok, wfail, cok, cfail,
