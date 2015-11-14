@@ -66,6 +66,13 @@ var r = new Ractive({
       return '<Unknown>';
     },
     agentName(order) {
+      if (order.agentId) {
+        let idx = this.get(`agentMap.${order.agentId}`);
+        if (idx !== undefined) {
+          idx = this.get(`agents.${idx}.name`);
+          if (idx) return idx;
+        }
+      }
       if (order.entry) {
         let e = order.entry;
         if (e.config.agent) return e.config.agent;
@@ -386,12 +393,52 @@ r.components.Schedule = Ractive.extend({
   {{#if ~/type.indexOf('CRON') !== -1}}
     {{#with ~/schedule.CRON}}
       <div class="list striped">
-        <div class="middle"><span style="width: 8em;">Months:</span><button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.M', '')">+</button>{{#each .M}}{{>'numberList'}}{{/each}}</div>
-        <div class="middle"><span style="width: 8em;">Month Days:</span><button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.d', '')">+</button>{{#each .d}}{{>'numberList'}}{{/each}}</div>
-        <div class="middle"><span style="width: 8em;">Weekdays:</span><button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.w', '')">+</button>{{#each .w}}{{>'numberList'}}{{/each}}</div>
+        <div class="middle">
+          <span style="width: 8em;">Months:</span>
+          {{#if !!.M}}<input type="checkbox" checked on-click="set('schedule.CRON.M', false)" />{{/if}}
+          {{#if !.M}}<input type="checkbox" on-click="set('schedule.CRON.M', [])" />{{/if}}
+          {{#if !!.M}}
+            <button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.M', '')">+</button>
+            {{#each .M}}{{>'numberList'}}{{/each}}
+          {{/if}}
+        </div>
+        <div class="middle">
+          <span style="width: 8em;">Month Days:</span>
+          {{#if !!.d}}<input type="checkbox" checked on-click="set('schedule.CRON.d', false)" />{{/if}}
+          {{#if !.d}}<input type="checkbox" on-click="set('schedule.CRON.d', [])" />{{/if}}
+          {{#if !!.d}}
+            <button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.d', '')">+</button>
+            {{#each .d}}{{>'numberList'}}{{/each}}
+          {{/if}}
+        </div>
+        <div class="middle">
+          <span style="width: 8em;">Weekdays:</span>
+          {{#if !!.w}}<input type="checkbox" checked on-click="set('schedule.CRON.w', false)" />{{/if}}
+          {{#if !.w}}<input type="checkbox" on-click="set('schedule.CRON.w', [])" />{{/if}}
+          {{#if !!.w}}
+            <button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.w', '')">+</button>
+            {{#each .w}}{{>'numberList'}}{{/each}}
+          {{/if}}
+        </div>
         {{#if ~/type.indexOf('Interval') === -1}}
-          <div class="middle"><span style="width: 8em;">Hours:</span><button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.h', '')">+</button>{{#each .h}}{{>'numberList'}}{{/each}}</div>
-          <div class="middle"><span style="width: 8em;">Minutes:</span><button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.m', '')">+</button>{{#each .m}}{{>'numberList'}}{{/each}}</div>
+          <div class="middle">
+            <span style="width: 8em;">Hours:</span>
+            {{#if !!.h}}<input type="checkbox" checked on-click="set('schedule.CRON.h', false)" />{{/if}}
+            {{#if !.h}}<input type="checkbox" on-click="set('schedule.CRON.h', [])" />{{/if}}
+            {{#if !!.h}}
+              <button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.h', '')">+</button>
+              {{#each .h}}{{>'numberList'}}{{/each}}
+            {{/if}}
+          </div>
+          <div class="middle">
+            <span style="width: 8em;">Minutes:</span>
+            {{#if !!.m}}<input type="checkbox" checked on-click="set('schedule.CRON.m', false)" />{{/if}}
+            {{#if !.m}}<input type="checkbox" on-click="set('schedule.CRON.m', [])" />{{/if}}
+            {{#if !!.m}}
+              <button class="pure-button pure-button-secondary" on-click="unshift('schedule.CRON.m', '')">+</button>
+              {{#each .m}}{{>'numberList'}}{{/each}}
+            {{/if}}
+          </div>
         {{/if}}
       </div>
     {{/with}}
@@ -433,22 +480,15 @@ r.components.Schedule = Ractive.extend({
     );
 
     this.observe('type', v => {
-      const ensureArray = p => {
-        if (!this.get(p)) {
-          this.set(p, []);
-        }
-      };
       if (v === 'CRON') {
-        ['M', 'd', 'w', 'h', 'm'].map(k => `schedule.CRON.${k}`).forEach(ensureArray);
         this.set('schedule.interval', undefined);
       } else if (v === 'Interval') {
-        ensureArray('schedule.interval');
         if (typeof this.get('schedule.interval') === 'string') this.set('schedule.interval', this.get('schedule.interval').split(','));
+        if (!Array.isArray(this.get('schedule.interval'))) this.set('schedule.interval', []);
         this.set('schedule.CRON', undefined);
       } else if (v === 'CRON + Interval') {
-        ['M', 'd', 'w'].map(k => `schedule.CRON.${k}`).forEach(ensureArray);
-        ensureArray('schedule.interval');
         if (typeof this.get('schedule.interval') === 'string') this.set('schedule.interval', this.get('schedule.interval').split(','));
+        if (!Array.isArray(this.get('schedule.interval'))) this.set('schedule.interval', []);
       }
     });
   },

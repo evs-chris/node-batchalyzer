@@ -139,9 +139,11 @@
                         <div class="schedule">
                           <h3 class="title">{{~/filter.dateString(.target)}}</h3>
                           <div class="sub list jobs striped">
-                            <div class="header"><div class="size-1-4">Job</div><div class="size-1-4">Agent</div><div class="size-1-8">Status</div><div class="size-1-4">Time</div><div style="width: 2em;" /></div>
+                            <div class="header"><div style="width: 3em;">ID</div><div style="width: 4em;">Entry ID</div><div class="size-1-4">Job</div><div class="size-1-4">Agent</div><div class="size-1-8">Status</div><div class="size-1-4">Time</div><div style="width: 2em;" /></div>
                             {{#each .jobs}}
                               <div class="job {{#if .status === -2}}schedule{{elseif .status === -1}}resource{{elseif .status === 0}}done{{elseif .status === 1}}failed{{elseif .status === 2}}warn{{else}}unknown{{/if}}" on-dblclick-dbltap="openOrder:{{.}}">
+                                <div style="width: 3em;">{{.id}}</div>
+                                <div style="width: 4em;">{{.entryId}}</div>
                                 <div class="size-1-4">{{~/orderName(.)}}</div>
                                 <div class="size-1-4">{{~/agentName(.)}}</div>
                                 <div class="size-1-8">
@@ -174,13 +176,17 @@
                     </div>
                     <div class="entries list striped">
                       <div class="header">
+                        <div style="width: 3em;">ID</div>
                         <div style="width: 7em;">Custom ID</div>
+                        <div style="width: 3em;">Job ID</div>
                         <div style="width: 5em;">Priority</div>
                         <div class="primary">Name</div>
                       </div>
                       {{#each ~/entries}}
                         <div class="entry" on-dblclick-dbltap="openEntry:{{.}}">
+                          <div style="width: 3em;">{{.id}}</div>
                           <div style="width: 7em;">{{.customId}}</div>
+                          <div style="width: 3em;">{{.jobId}}</div>
                           <div style="width: 5em;">{{.priority}}</div>
                           <div class="primary">{{~/orderName(.)}}</div>
                         </div>
@@ -194,12 +200,14 @@
                     </div>
                     <div class="jobs list striped">
                       <div class="header">
+                        <div style="width: 3em;">ID</div>
                         <div style="width: 7em;">Custom ID</div>
                         <div style="width: 5em;">Priority</div>
                         <div style="width: 8em;">Name</div>
                       </div>
                       {{#each ~/jobs}}
                         <div class="job" on-dblclick-dbltap="openJob:{{.}}">
+                          <div style="width: 3em;">{{.id}}</div>
                           <div style="width: 7em;">{{.customId}}</div>
                           <div style="width: 5em;">{{.priority}}</div>
                           <div style="width: 8em;">{{~/orderName(.)}}</div>

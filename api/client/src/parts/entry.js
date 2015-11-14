@@ -14,7 +14,7 @@ export default function(r) {
 
       {{#if ~/tmp.tab === 'details' || !~/tmp.tab}}
         <div>
-          Details
+          <textarea readonly style="width: 100%; height: 20em;">{{JSON.stringify(.config, null, '  ')}}</textarea>
         </div>
       {{/if}}
 
