@@ -267,13 +267,13 @@ module.exports = function(cfg) {
 
               case 'fetchPrevious':
                 m = data.data;
-                log.server.trace(`Got a previous request from ${c.id} for ${m.entryId}`);
+                log.server.trace(`Got a previous request from ${c.id} for ${m.id}`);
                 findOrder(m.id).then(o => {
                   dao.lastEntryOrder({ id: o.entryId }, m).then(o => {
                     log.server.trace(`Returning found last entry to ${c.id} for ${m.id}`);
                     c.fire('previous', { request: m, previous: o });
                   }, () => {
-                    log.server.trace(`Returning no last entry to ${c.od} for ${m.entryId}`);
+                    log.server.trace(`Returning no last entry to ${c.od} for ${m.id}`);
                     c.fire('previous', { request: m });
                   });
                 });
@@ -441,34 +441,14 @@ function newDay(context) {
   let { dao } = context, date = zeroDate();
   // make sure there isn't already a completed schedule
   return dao.findSchedule(date).then(ds => {
-    if (ds.length > 0) return;
+    if (ds.length > 0) return refreshSchedule(context, ds[0]);
 
     // need to create new schedule
     let sched = { target: date, active: true, name: `${date.getFullYear()}-${lpad(date.getMonth() + 1, 2, '0')}-${lpad(date.getDate(), 2, '0')}` };
 
-    return dao.entries().then(es => {
-      let orders = [], map = {};
-      for (let i = 0; i < es.length; i++) {
-        let e = es[i];
-        let next = nextTime(date, e, e.schedule || (e.job || {}).schedule, date);
-        if (next && (!e.lastRun || e.lastRun < next)) {
-          orders.push({ entryId: e.id, next, status: -1 });
-          map[e.id] = e;
-          e.next = next;
-        }
-      }
-
-      return dao.newSchedule(sched, orders).then(s => {
-        // TODO: on first run, s is undefined
-        let os = s.jobs;
-        for (let i = 0; i < os.length; i++) {
-          let o = os[i], e = map[o.entryId];
-          if (e) {
-            os[i].next = e.next;
-            if ('intervalIndex' in e) os[i].intervalIndex = e.intervalIndex;
-          }
-        }
-        context.schedules[s.id] = s;
+    return dao.newSchedule(sched).then(s => {
+      context.schedules[s.id] = s;
+      return refreshSchedule(context, s).then(() => {
         return s;
       });
     });
@@ -508,7 +488,7 @@ function refreshSchedule(context, s) {
       matches.forEach(o => o.entry.lastScheduleRun = e.lastScheduleRun);
       if (matches.length > 0) continue;
 
-      let time = nextTime(date, e, e.schedule || (e.job || {}).schedule);
+      let time = nextTime(date, e, e.schedule || (e.job || {}).schedule, !e.lastScheduleRun ? date : undefined);
       if (time) {
         log.schedule.trace(`Ordering missing entry ${e.id} on ${s.target}.`);
         orders.push({ entryId: e.id, eligibleAt: time, next: time, status: -1, entry: e });

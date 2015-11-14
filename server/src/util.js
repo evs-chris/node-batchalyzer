@@ -67,7 +67,7 @@ function nextTime(target, obj, schedule, start) {
       }
 
       let tm = new Date(+zeroDate(now) + offset);
-      if (tm > now) return tm;
+      if (tm > now || (+tm === +target && +tm === +start)) return tm;
       else return;
     }
   }
