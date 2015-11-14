@@ -86,14 +86,14 @@ module.exports = function(cfg) {
         entries(options = {}) {
           if (options.date) {
             return dao.entries.query(
-              `with lasts as (select ROW_NUMBER() over (partition by entry_id order by completed_at desc) as rownum, entry_id, completed_at from orders o where o.schedule_id = (select id from schedules where ? >= target and ? <= target))
-              select e.*, @job.*, l.completed_at as done
-              from ${prefix}entries e
-                left join lasts l on l.entry_id = e.id and l.rownum = 1
+              `with lasts as (select o.entry_id, max(o.completed_at) as done from orders o where o.schedule_id = (select id from schedules where target = ?) group by entry_id)
+              select @e.*, @job.*, l.done, l.*
+              from @${prefix}entries e
+                left join lasts l on l.entry_id = e.id
                 left join @${prefix}jobs job on e.job_id = job.id`,
               options.date,
-              options.date,
               { fetch: { job: '' }, extra: { e(rec, res) {
+                console.log(rec, rec.done)
                 res.lastScheduleRun = rec.done;
               } } }
             );
@@ -220,7 +220,7 @@ module.exports = function(cfg) {
           return dao.schedules.find('target >= ? and target <= ?', date, date);
         },
         // create schedule and order all jobs
-        newSchedule(schedule, orders) {
+        newSchedule(schedule, orders = []) {
           return db.transaction(function*(t) {
             let s = yield dao.schedules.insert(schedule, { t });
             for (let i = 0; i < orders.length; i++) {
