@@ -455,6 +455,7 @@ function newDay(context) {
     });
   }).then(s => {
     scheduleNewDay(context);
+    expireSchedules(context);
     return s;
   }).then(null, err => {
     log.schedule.error('Error during newDay', err);

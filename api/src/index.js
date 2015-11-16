@@ -1,12 +1,12 @@
 const koa = require('koa');
-const config = require('flapjacks').read();
+const config = require('flapjacks').read({ name: 'batchalyzer-api' });
 const http = require('http');
 const route = require('koa-route');
 const sendfile = require('koa-sendfile');
 const body = require('co-body');
 const path = require('path');
 
-const configPrefix = 'batchalyzer.api';
+const configPrefix = 'api';
 
 const log = (function() {
   let prefix = config.get('logPrefix', '');
