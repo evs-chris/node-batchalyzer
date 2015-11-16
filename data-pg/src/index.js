@@ -93,7 +93,6 @@ module.exports = function(cfg) {
                 left join @${prefix}jobs job on e.job_id = job.id`,
               options.date,
               { fetch: { job: '' }, extra: { e(rec, res) {
-                console.log(rec, rec.done)
                 res.lastScheduleRun = rec.done;
               } } }
             );
@@ -190,14 +189,14 @@ module.exports = function(cfg) {
         activeSchedules(opts = {}) {
           if (!('allOrders' in opts) || opts.allOrders) {
             return dao.schedules.query(
-              `with sched as (select @s.* from @${prefix}schedules s where s.active = true),
+              `with sched as (select @s.* from @${prefix}schedules s where s.${opts.id ? 'id = ' + opts.id : 'active = true'}),
               stuff as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched))
               select sched.*, stuff.* from sched left join stuff on stuff.@:jobs.schedule_id = @:s.id where @:s.active = true`,
               { fetch: { jobs: [{ entry: { job: '' } }] } }
             );
           } else {
             return dao.schedules.query(
-              `with sched as (select @s.* from @${prefix}schedules s where s.active = true),
+              `with sched as (select @s.* from @${prefix}schedules s where s.${opts.id ? 'id = ' + opts.id : 'active = true'}),
               bits as (select @jobs.*, @entry.*, @job.* from @${prefix}orders jobs join @${prefix}entries entry on jobs.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where jobs.schedule_id in (select @:s.id from sched) order by jobs.created_at desc),
               lasts as (select ROW_NUMBER() over(partition by @:jobs.schedule_id, @:jobs.entry_id order by @:jobs.created_at desc) as rownum, bits.* from bits),
               stuff as (select * from lasts where rownum = 1)
@@ -217,12 +216,15 @@ module.exports = function(cfg) {
           );
         },
         findSchedule(date) {
-          return dao.schedules.find('target >= ? and target <= ?', date, date);
+          return dao.schedules.find('target = ?', date);
         },
         // create schedule and order all jobs
         newSchedule(schedule, orders = []) {
+          schedule.active = true;
           return db.transaction(function*(t) {
             let s = yield dao.schedules.insert(schedule, { t });
+            if ( !orders || !orders.length ) return s;
+
             for (let i = 0; i < orders.length; i++) {
               let o = orders[i];
               o.scheduleId = s.id;

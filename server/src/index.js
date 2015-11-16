@@ -448,6 +448,7 @@ function newDay(context) {
 
     return dao.newSchedule(sched).then(s => {
       context.schedules[s.id] = s;
+      s.jobs = [];
       return refreshSchedule(context, s).then(() => {
         return s;
       });
@@ -455,6 +456,9 @@ function newDay(context) {
   }).then(s => {
     scheduleNewDay(context);
     return s;
+  }).then(null, err => {
+    log.schedule.error('Error during newDay', err);
+    scheduleNewDay(context);
   });
 }
 
