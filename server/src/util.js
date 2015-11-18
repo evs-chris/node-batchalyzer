@@ -36,6 +36,8 @@ function nextTime(target, obj, schedule, start) {
   let now = start || new Date();
   if (target > now || target.getDate() !== now.getDate() && !(schedule.CRON || {}).important) return; // not the right day
 
+  if (!schedule) return;
+
   if (schedule.time) {
     return new Date(schedule.time);
   } else if (schedule.fuzzy) {

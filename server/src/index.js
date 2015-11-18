@@ -63,6 +63,7 @@ module.exports = function(cfg) {
     // TODO: add a reload helper for loading config, etc changes
     let clients = [], apis = [], webServer, socketServer, apiServer, initedServer = false, clientCount = 0, apiCount = 0;
     const port = config.get(`${prefix}.port`, 8080);
+    const host = config.get(`${prefix}.host`, '127.0.0.1');
     const mount = config.get(`${prefix}.mount`, '/service/scheduler');
 
     let context = { dao, schedules: {}, agents: [], stats: [], findOrder, findStat, fireJob, fireStat, reload };
@@ -135,7 +136,7 @@ module.exports = function(cfg) {
       else {
         log.server.info('Starting own HTTP server on port ' + port);
         webServer = http.createServer();
-        webServer.listen(port);
+        webServer.listen(port, host);
         initedServer = true;
       }
 
@@ -456,6 +457,7 @@ function newDay(context) {
   }).then(s => {
     scheduleNewDay(context);
     expireSchedules(context);
+    pump(context);
     return s;
   }).then(null, err => {
     log.schedule.error('Error during newDay', err);
