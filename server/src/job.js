@@ -101,7 +101,7 @@ module.exports = function(cfg, log) {
 
       let msg = {
         handle: `job ${job.entryId} state`,
-        message: `Job ${job.config.name || (job.entry.job || {}).name || job.id} ${job.status === 0 ? 'OK' : job.status === 1 ? 'FAILED' : job.status === 2 ? 'WARNING' : 'UNKOWN'}`
+        message: `Job ${(job.config.config || job.config).name || ((job.entry || {}).job || {}).name || (((job.entry || {}).config || {}).config || {}).name || job.id} ${job.status === 0 ? 'OK' : job.status === 1 ? 'FAILED' : job.status === 2 ? 'WARNING' : 'UNKOWN'}`
       };
       if (data.result === 0) msg.status = 3;
       dao.message(msg);
@@ -166,11 +166,13 @@ module.exports = function(cfg, log) {
 
         if (s.next) {
           if (s.next <= now) { // stat is time eligible
-            context.fireStat(s);
+            context.fireStat(s).then(res => {
+              if (res) {
+                s.next = nextTime(now, s, isEmptyObject(s.config.schedule) ? s.definition.config.schedule : s.config.schedule);
+              }
+            });
             // TODO: track stats that never come back
             // schedule next collection too, in case the stat never comes back
-            s.next = nextTime(now, s, isEmptyObject(s.config.schedule) ? s.definition.config.schedule : s.config.schedule);
-            if (!next || s.next < next) next = s.next;
           } else {
             // find the next closest time to pump
             if (!next || s.next < next) next = s.next;
@@ -187,7 +189,8 @@ module.exports = function(cfg, log) {
           if (j.status >= 0 || j.held) continue; // skip non-pending orders
 
           if (!j.next) {
-            j.next = nextTime(s.target, j, isEmptyObject(j.entry.schedule) ? (j.entry.job || {}).schedule : j.entry.schedule, j.lastScheduleRun);
+            if (j.onDemand) j.next = now;
+            else j.next = nextTime(s.target, j, isEmptyObject(j.entry.schedule) ? (j.entry.job || {}).schedule : j.entry.schedule, j.lastScheduleRun);
           }
           // if the schedule is older than today, the job is time eligible
           if (!j.next && s.target < today) {

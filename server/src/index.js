@@ -486,7 +486,7 @@ function refreshSchedule(context, s) {
       let e = es[i], matches = [];
       for (let j = 0; j < s.jobs.length; j++) {
         let o = s.jobs[j];
-        if (o.entryId === e.id && o.status < 0) {
+        if (o.entryId === e.id && o.status < 0 && !o.onDemand) {
           if (!o.next && o.eligibleAt) o.next = o.eligibleAt;
           else if (!o.next) o.next = nextTime(date, e, e.schedule || (e.job || {}).schedule, date);
           matches.push(o);

@@ -14,8 +14,8 @@ module.exports = function(cfg, log) {
         if (next) {
           s.next = next;
           context.stats.push(s);
-          log.schedule.trace(`Scheduling ${s.definition.name} ${s.cmd || 'builtin'} for ${next}`);
-        }
+          log.schedule.trace(`Scheduling ${s.definition.name} ${s.cmd || (s.definition.config.command || {}).name || 'builtin'} for ${next}`);
+        } else (log.schedule.trace(`No time for ${s.definition.name || (s.definition.config.command || {}).name}`));
       }
 
       return context.stats;
@@ -45,7 +45,7 @@ module.exports = function(cfg, log) {
           else {
             let def = stat.definition;
             log.stat.info(`Firing ${def.name} for ${agents[i].name}`);
-            agents[i].fire('stat', { id: stat.id, type: def.type, cmd: def.config.command, config: assign({}, stat.config, def.config) });
+            agents[i].fire('stat', assign({ id: stat.id, type: def.type, config: assign({}, stat.config, def.config) }, stat.config, def.config));
             ok();
             return;
           }

@@ -14,6 +14,7 @@ module.exports = function(cfg, log) {
 
   function doMessage(msg, details, check) {
     let m;
+    let orig = msg;
 
     if (!check) {
       delete msg.id;
@@ -27,6 +28,8 @@ module.exports = function(cfg, log) {
         agentId: (details.agent || {}).id || details.agentId,
         audit: []
       };
+    } else {
+      orig = m.message;
     }
 
     m.message = msg;
@@ -39,10 +42,11 @@ module.exports = function(cfg, log) {
     else if (m.details.ack) status = 1;
     m.status = status;
 
-    if (m.status !== status) m.audit.push({
+    if (m.status !== status || msg !== orig) m.audit.push({
       who: (details.user || {}).name || details.username || '<system>',
       when: new Date().toISOString(),
-      status
+      status,
+      previous: orig
     });
   }
 

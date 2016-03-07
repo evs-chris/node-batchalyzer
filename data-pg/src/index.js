@@ -22,6 +22,8 @@ module.exports = function(cfg) {
   config.ensure(`${configPrefix}.prefix`, 'scheduler_');
   let prefix = config.get(`${configPrefix}.prefix`);
 
+  const statExtra = [ 'name', 'critical', 'warning', 'avgs', 'recent' ];
+
   return migrate(config.get(configPrefix))().then(() => {
     let db = pg(config.get(`${configPrefix}.connection`), config.get(`${configPrefix}.options`, {}));
     db.log(msg => log[msg.error ? 'error' : 'trace'](`${msg.query}\n${JSON.stringify(msg.params)}${msg.error ? '\n' + msg.error : ''}`));
@@ -90,14 +92,15 @@ module.exports = function(cfg) {
               select @e.*, @job.*, l.done, l.*
               from @${prefix}entries e
                 left join lasts l on l.entry_id = e.id
-                left join @${prefix}jobs job on e.job_id = job.id`,
+                left join @${prefix}jobs job on e.job_id = job.id
+              where e.deleted_at is null`,
               options.date,
               { fetch: { job: '' }, extra: { e(rec, res) {
                 res.lastScheduleRun = rec.done;
               } } }
             );
           } else {
-            return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id`, { fetch: { job: '' } });
+            return dao.entries.query(`select e.*, @job.* from ${prefix}entries e left join @${prefix}jobs job on e.job_id = job.id where e.deleted_at is null`, { fetch: { job: '' } });
           }
         },
         jobs() {
@@ -149,10 +152,17 @@ module.exports = function(cfg) {
           return dao.entries.upsert(entry);
         },
         dropEntry(entry) {
-          return dao.entries.del(entry);
+          entry.deletedAt = new Date();
+          return dao.entries.upsert(entry);
         },
         putOrder(order) {
-          return dao.orders.upsert(order);
+          return db.transaction(function*(t) {
+            // if no schedule id, use the latest active schedule
+            if (!order.scheduleId) {
+              order.scheduleId = (yield db.queryOne('select id from schedules where active = true order by target desc limit 1')).id;
+            }
+            return yield dao.orders.upsert(order);
+          });
         },
         findOrder(id) {
           return dao.orders.query(`select o.*, @entry.*, @job.* from ${prefix}orders o join @${prefix}entries entry on o.entry_id = entry.id left join @${prefix}jobs job on entry.job_id = job.id where o.id = ?`, id, { fetch: { entry: { job: '' } } }).then(rows => {
@@ -447,9 +457,15 @@ module.exports = function(cfg) {
             { fetch: { definition: {} } }
           );
         },
+        putStat(stat) {
+          return dao.stats.upsert(stat);
+        },
         // get list of definitions
         statDefinitions() {
           return dao.statDefinitions.find();
+        },
+        putStatDefinition(def) {
+          return dao.statDefinitions.upsert(def);
         },
         findStat(id) {
           return dao.stats.findOne('id = ?', id);
@@ -463,12 +479,22 @@ module.exports = function(cfg) {
           });
         },
         currentStats() {
-          return []
           return dao.stats.query(
             // fetch stats with last 10 values, avgs over last 7 days, current value, warning, crit, name, and agent name
-            ``
+            `with avgs as (select stat_id, avg(value) from stat_entries where created_at > now() - '7 days'::interval group by stat_id, created_at::date order by created_at::date desc)
+            select @s.*, d.name, d.warning, d.critical, ARRAY(select avg from avgs where avgs.stat_id = s.id) as avgs, ARRAY(with data(value, status, time) as (select value, status, created_at from stat_entries e where e.stat_id = s.id order by created_at desc limit 11) select row_to_json(data) from data) as recent
+              from @stats s join stat_definitions d on d.id = s.definition_id left join avgs on s.id = avgs.stat_id where s.definition_id is not null
+            `,
+            { extra: { s(rec, res) {
+              statExtra.forEach(k => res[k] = rec[k]);
+              if (Array.isArray(res.recent)) {
+                res.current = res.recent.shift();
+              }
+              if (Array.isArray(res.avgs)) {
+                res.avg = res.avgs.shift();
+              }
+            } } }
           );
-
         },
 
         // Message related methods
