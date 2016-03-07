@@ -101,8 +101,10 @@ module.exports = function(cfg, log) {
 
       let msg = {
         handle: `job ${job.entryId} state`,
-        message: `Job ${(job.config.config || job.config).name || ((job.entry || {}).job || {}).name || (((job.entry || {}).config || {}).config || {}).name || job.id} ${job.status === 0 ? 'OK' : job.status === 1 ? 'FAILED' : job.status === 2 ? 'WARNING' : 'UNKOWN'}`
+        message: `Job ${(job.config.config || job.config).name || ((job.entry || {}).job || {}).name || (((job.entry || {}).config || {}).config || {}).name || job.id} ${job.status === 0 ? 'OK' : job.status === 1 ? 'FAILED' : job.status === 2 ? 'WARNING' : 'UNKOWN'}`,
+        orderId: job.id
       };
+      if (job.agentId) msg.agentId = job.agentId;
       if (data.result === 0) msg.status = 3;
       dao.message(msg);
 
