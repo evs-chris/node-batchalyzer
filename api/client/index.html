@@ -78,12 +78,29 @@
                 <div class="content flex">
                   {{#if ~/settings.statsTab.tab === 'vals' || !~/settings.statsTab.tab}}
                     <div class="actions">
-                      <button class="pure-button pure-button-primary" on-click="refreshStats()"><span class="icon">&#10227;</span></button>
+                      <button class="pure-button pure-button-primary" on-click="refreshStatValues()"><span class="icon">&#10227;</span></button>
                     </div>
-                    <div class="stat-values list striped">
+                    <div class="stat-values">
                       {{#each ~/statValues}}
                         <div class="stat">
-                          <div>{{.name}}</div>
+                          <div>{{.name}} on {{~/agentName(.)}}</div>
+                          {{#.current}}
+                            <div>{{.value}} - {{.status}}</div>
+                          {{/}}
+                          <svg width="300px" height="100px" viewBox="-20 -20 340 122">
+                            <path d="{{~/graphPath(.avg, .avgs, '', 300, 100)}}" fill="rgba(0, 0, 128, 0.2)" stroke="blue" />
+                            <path d="{{~/graphPath(.current, .recent, 'value', 300, 100)}}" fill="rgba(0, 128, 0, 0.2)" stroke="green" />
+                            <text text-anchor="end" x="-5" y="100" stroke="blue">{{~/graphMin(.avg, .avgs, '', .unit || '')}}</text>
+                            <text text-anchor="end" x="-5" y="0" stroke="blue">{{~/graphMax(.avg, .avgs, '', .unit || '')}}</text>
+                            <text text-anchor="start" x="305" y="100" stroke="green">{{~/graphMin(.current, .recent, 'value', .unit || '')}}</text>
+                            <text text-anchor="start" x="305" y="0" stroke="green">{{~/graphMax(.current, .recent, 'value', .unit || '')}}</text>
+                            {{#each ~/graphPoints(.avg, .avgs, '', 300, 100, '')}}
+                              <circle cx="{{.x}}" cy = "{{.y}}" r="3.5" fill="blue"><title>{{.label}}</title>
+                            {{/each}}
+                            {{#each ~/graphPoints(.current, .recent, 'value', 300, 100, 'status')}}
+                              <circle cx="{{.x}}" cy = "{{.y}}" r="3.5" fill="green"><title>{{.label}}</title>
+                            {{/each}}
+                          </svg>
                         </div>
                       {{/each}}
                     </div>
@@ -91,13 +108,22 @@
 
                   {{#if ~/settings.statsTab.tab === 'stats'}}
                     <div class="actions">
+                      <button class="pure-button pure-button-secondary" on-click="openStat">New</button>
                       <button class="pure-button pure-button-primary" on-click="refreshStats()"><span class="icon">&#10227;</span></button>
                     </div>
                     <div class="list striped">
-                      <div class="header"></div>
+                      <div class="header">
+                        <div style="width: 3em;">ID</div>
+                        <div style="width: 3em;">Def ID</div>
+                        <div class="l-1-4">Name</div>
+                        <div class="l-1-4">Agent</div>
+                      </div>
                       {{#each ~/stats}}
-                        <div>
-                          <div>{{.id}}</div>
+                        <div on-dblclick-dbltap="openStat:{{.}}">
+                          <div style="width: 3em;">{{.id}}</div>
+                          <div style="width: 3em;">{{.definitionId}}</div>
+                          <div class="l-1-4">{{~/statName(.)}}</div>
+                          <div class="l-1-4">{{~/agentName(.)}}</div>
                         </div>
                       {{/each}}
                     </div>
@@ -105,13 +131,18 @@
 
                   {{#if ~/settings.statsTab.tab === 'defs'}}
                     <div class="actions">
-                      <button class="pure-button pure-button-primary" on-click="refreshStatDefs()"><span class="icon">&#10227;</span></button>
+                      <button class="pure-button pure-button-secondary" on-click="openStatDef">New</button>
+                      <button class="pure-button pure-button-primary" on-click="refreshStats()"><span class="icon">&#10227;</span></button>
                     </div>
                     <div class="list striped">
-                      <div class="header"></div>
+                      <div class="header">
+                        <div style="width: 3em;">ID</div>
+                        <div class="l-1-4">Name</div>
+                      </div>
                       {{#each ~/statDefs}}
-                        <div>
-                          <div>{{.id}}</div>
+                        <div on-dblclick-dbltap="openStatDef:{{.}}">
+                          <div style="width: 3em;">{{.id}}</div>
+                          <div class="l-1-4">{{~/statName(.)}}</div>
                         </div>
                       {{/each}}
                     </div>
@@ -132,18 +163,25 @@
                   {{#if ~/settings.schedulesTab.tab === 'active' || !~/settings.schedulesTab.tab}}
                   <div>
                     <div class="actions">
-                      <button class="pure-button pure-button-primary" on-click="refreshSchedules()"><span class="icon">&#10227;</span></button>
+                      <div class="left">
+                        <label><input type="checkbox" checked="{{~/settings.showCompletedJobs}}" /> Show complete?</label>
+                      </div>
+                      <div class="right">
+                        <span>{{~/serverTime}}</span>
+                        <button class="pure-button pure-button-primary" on-click="refreshSchedules()"><span class="icon">&#10227;</span></button>
+                      </div>
                     </div>
                     <div class="schedules">
                       {{#each ~/schedules}}
                         <div class="schedule">
-                          <h3 class="title">{{~/filter.dateString(.target)}}</h3>
-                          <div class="sub list jobs striped">
-                            <div class="header"><div style="width: 3em;">ID</div><div style="width: 4em;">Entry ID</div><div class="size-1-4">Job</div><div class="size-1-4">Agent</div><div class="size-1-8">Status</div><div class="size-1-4">Time</div><div style="width: 2em;" /></div>
-                            {{#each .jobs}}
+                          <h3 class="title"><button class="pure-button expand-button" on-click="toggle(@keypath + '.expanded')">{{.expanded ? '-' : '+'}}</button> {{~/filter.dateString(.target)}}</h3>
+                          <div class="sub list jobs striped">{{#if .expanded}}
+                            <div class="header"><div style="width: 3em;">ID</div><div style="width: 4em;">Entry ID</div><div style="width: 5em;">Custom ID</div><div class="size-1-4">Job</div><div class="size-1-4">Agent</div><div class="size-1-8">Status</div><div style="width: 10em;">Time</div><div style="width: 2em;" /></div>
+                            {{#each .jobs}}{{#if .status !== 0 || ~/settings.showCompletedJobs}}
                               <div class="job {{#if .status === -2}}schedule{{elseif .status === -1}}resource{{elseif .status === 0}}done{{elseif .status === 1}}failed{{elseif .status === 2}}warn{{else}}unknown{{/if}}" on-dblclick-dbltap="openOrder:{{.}}">
                                 <div style="width: 3em;">{{.id}}</div>
                                 <div style="width: 4em;">{{.entryId}}</div>
+                                <div style="width: 5em;">{{.entry.customId}}</div>
                                 <div class="size-1-4">{{~/orderName(.)}}</div>
                                 <div class="size-1-4">{{~/agentName(.)}}</div>
                                 <div class="size-1-8">
@@ -154,7 +192,7 @@
                                   {{elseif .status < 3}}Failed
                                   {{else}}Unknown{{/if}}
                                 </div>
-                                <div class="size-1-4">
+                                <div style="width: 10em;">
                                   {{~/filter.timestamp(.status < 0 ? .eligibleAt : .status === 10 ? .startedAt : .completedAt)}}
                                 </div>
                                 <div style="width: 2em;">
@@ -162,8 +200,8 @@
                                   {{#if .onDemand}}&#9823;{{/if}}
                                 </div>
                               </div>
-                            {{/each}}
-                          </div>
+                            {{/if}}{{/each}}
+                          {{/if}}</div>
                         </div>
                       {{/each}}
                     </div>
@@ -172,6 +210,7 @@
 
                   {{#if ~/settings.schedulesTab.tab === 'entries'}}
                     <div class="actions">
+                      <button class="pure-button pure-button-secondary" on-click="openEntry">New</button>
                       <button class="pure-button pure-button-primary" on-click="refreshEntries()"><span class="icon">&#10227;</span></button>
                     </div>
                     <div class="entries list striped">
@@ -196,6 +235,7 @@
 
                   {{#if ~/settings.schedulesTab.tab === 'jobs'}}
                     <div class="actions">
+                      <button class="pure-button pure-button-secondary" on-click="openJob">New</button>
                       <button class="pure-button pure-button-primary" on-click="refreshJobs()"><span class="icon">&#10227;</span></button>
                     </div>
                     <div class="jobs list striped">
@@ -222,6 +262,7 @@
             {{#if ~/settings.tab === 'agents'}}
               <div>
                 <div class="actions">
+                  <button class="pure-button pure-button-secondary" on-click="openAgent">New</button>
                   <button class="pure-button pure-button-primary" on-click="refreshAgents()"><span class="icon">&#10227;</span></button>
                 </div>
                 <div class="agents list striped">
@@ -239,6 +280,7 @@
             {{#if ~/settings.tab === 'resources'}}
               <div>
                 <div class="actions">
+                  <button class="pure-button pure-button-secondary" on-click="openResource">New</button>
                   <button class="pure-button pure-button-primary" on-click="refreshResources()"><span class="icon">&#10227;</span></button>
                 </div>
                 <div class="resources list striped">
@@ -246,7 +288,7 @@
                     <div class="primary">Name</div><div style="width: 4em;">Used</div><div style="width: 4em;">Total</div>
                   </div>
                   {{#each resources}}
-                    <div class="resource">
+                    <div class="resource" on-dblclick-dbltap="openResource:{{.}}">
                       <div class="primary">{{.name}}</div>
                       <div class="number" style="width: 4em;">{{.used}}</div>
                       <div class="number" style="width: 4em;">{{.total}}</div>

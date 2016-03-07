@@ -29,8 +29,8 @@ div.list > div.selected {
 div.list > div > div.list {
   display: block;
 }
-div.flex > div.primary,
-div.list > div > div.primary {
+div.flex > .primary,
+div.list > div > .primary {
   flex-grow: 10;
 }
 div.list > div > div.number {
@@ -45,6 +45,7 @@ div.list > div > .size-1-4 {
 }
 div.list > div > .size-1-8 {
   max-width: 12.5%;
+  width: 12.5%;
 }
 
 div.content {
@@ -75,6 +76,19 @@ div.actions {
   box-sizing: border-box;
 }
 
+div.actions > .right {
+  display: inline-block;
+  box-sizing: border-box;
+  width: calc(50% - 1px);
+}
+div.actions > .left {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 49%;
+  text-align: left;
+  vertical-align: middle;
+}
+
 /* pure adjustments */
 .pure-button {
   padding: 0.4em 0.5em;
@@ -84,6 +98,13 @@ div.actions {
 .pure-button > .icon {
   font-size: 1.5em;
   line-height: 0.75em;
+}
+button.expand-button {
+  padding: 0.25em;
+  margin: 0.5em;
+  height: 1em;
+  line-height: 0.5em;
+  font-family: monospace;
 }
 
 .pure-form input:not([type]) {
@@ -148,6 +169,8 @@ div.actions {
   font-size: 0.8em;
   margin: 0.1em 0.2em;
 }
+.pure-form label.field > textarea,
+.pure-form label.field > select,
 .pure-form label.field > input:not([type=checkbox]):not([type=radio]) {
   display: block;
 }
@@ -263,6 +286,10 @@ div#main > div.content >  div.tabs {
 }
 div.tabs {
   padding: 0.5em 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: visible;
+  margin-bottom: 0.5em;
 }
 div.tabs > div {
   position: relative;
@@ -274,28 +301,34 @@ div.tabs > div:after {
   left: 0;
   bottom: -2px;
   width: 100%;
-  border-bottom: 2px solid rgba(0, 0, 0, 0.1);
+  border-bottom: 2px solid #eee;
 }
 div.tabs > div > .tab {
   display: inline-block;
   position: relative;
-  margin: 0 1em 0 0;
+  padding: 0.5em;
+  margin-bottom: -0.5em;
   cursor: pointer;
 }
-div.tabs > div > .tab:after {
+div.tabs > div > .tab:before {
   content: '';
   position: absolute;
-  left: 50%;
-  width: 0;
-  bottom: -2px;
-  opacity: 0;
-  transition: left 0.5s ease-in-out, width 0.5s ease-in-out, opacity 0.5s ease-in-out;
-  border-bottom: 2px solid #0078e7;
+  width: calc(100% + 40em);
+  left: -20em;
+  bottom: calc(0.5em - 2px);
+  transition: border-bottom-color 0.5s ease-in-out, width 0s linear 0.5s, left 0s linear 0.5s, z-index 0s linear 0.5s;
+  border-bottom: 2px solid #eee;
+  z-index: 1;
 }
 div.tabs > div > .tab.selected:after {
-  width: calc(100% + 1em);
-  left: -0.5em;
-  opacity: 1;
+  content: '';
+  position: absolute;
+  width: 100%;
+  left: 0;
+  bottom: calc(0.5em - 2px);
+  border-bottom: 2px solid #0078e7;
+  transition: border-bottom-color 0.5s ease-in-out, width 0s linear, left 0s linear, z-index 0s linear;
+  z-index: 10;
 }
 
 div.messages {
@@ -311,6 +344,7 @@ div.messages {
   position: fixed;
   left: 1.5em;
   right: 1.5em;
+  max-height: 60vh;
 }
 div.messages.expanded {
   overflow: auto;
@@ -410,9 +444,8 @@ div.messages > .list {
   div.tabs + div {
     margin: 0;
   }
-  div.tabs > div > .tab.selected:after {
-    left: 0;
-    width: 100%;
+  div.tabs > div > .tab {
+    margin-top: 0.75em;
   }
   div.list > div > .size-1-4,
   div.list > div > .size-1-8 {
@@ -428,5 +461,10 @@ div.messages > .list {
   div.messages {
     left: 0.5em;
     right: 0.5em;
+  }
+
+  div.actions > .left, div.actions > .right {
+    width: 100%;
+    display: block;
   }
 }

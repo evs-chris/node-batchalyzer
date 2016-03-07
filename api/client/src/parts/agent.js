@@ -13,11 +13,17 @@ export default function(r) {
   </div>
   <div class="pre-buttons" />
   <div class="buttons">
+    <button class="pure-button pure-button-primary" on-click="saveAgent">Save</button>
     <button class="pure-button pure-button-cancel" on-click="blockerClose">Close</button>
   </div>
 {{/with}}</div>`;
 
   r.on('openAgent', function(ev, item) {
+    if (item && !item.id && typeof item !== 'object') {
+      const agents = this.get('agents');
+      item = _.find(agents, e => e.id === item);
+    }
+
     this.clearSelection();
     this.modal({ template: tpl, close() {
         return true;
@@ -25,5 +31,16 @@ export default function(r) {
       data: { item: _.cloneDeep(item), original: item }
     });
     return false;
+  });
+
+  r.on('saveAgent', function(ev) {
+    let { item, original } = this.get('tmp');
+
+    xhr.json.post(`${config.mount}/agent`, { item }).then(i => {
+      let idx = this.get('agents').indexOf(original);
+      if (~idx) this.splice('agents', idx, 1, i);
+      else this.unshift('agents', i);
+      this.unblock();
+    }, e => this.message(`Agent save failed:<br/>${e.message}`, { title: 'Error', class: 'error' }));
   });
 }

@@ -3,7 +3,7 @@ export default function(r) {
   <div class="title">Entry - {{~/orderName(.)}}</div><div />
   <div class="flex primary" style="overflow: auto;">
     <div class="actions">
-      <button class="pure-button pure-button-primary" on-click="runEntryNow:{{.}}">Schedule Now</button>
+      {{#if .id}}<button class="pure-button pure-button-primary" on-click="runEntryNow:{{.}}">Schedule Now</button>{{/if}}
       {{#if .jobId}}<button class="pure-button pure-button-primary" on-click="openJob:{{.jobId}}">Open Job</button>{{/if}}
     </div>
     <div class="content flex">
@@ -14,7 +14,13 @@ export default function(r) {
 
       {{#if ~/tmp.tab === 'details' || !~/tmp.tab}}
         <div>
-          <textarea readonly style="width: 100%; height: 20em;">{{JSON.stringify(.config, null, '  ')}}</textarea>
+          <label class="field">Priority<input type="number" value="{{.priority}}" /></label>
+          <label class="field">Custom ID<input value="{{.customId}}" /></label>
+          <label class="field">Last Run<input value="{{.lastRun}}" readonly /></label>
+        </div>
+        <div class="flex primary">
+          <label>Config</label>
+          <textarea class="primary" twoway="false" on-change="newConfig:entry">{{JSON.stringify(.config, null, '  ')}}</textarea>
         </div>
       {{/if}}
 
@@ -45,8 +51,22 @@ export default function(r) {
       }
     }
 
+    const config = this.on('newConfig', (ev, which) => {
+      if (which !== 'entry') return;
+
+      let val = ev.original.target.value;
+      try {
+        this.set('tmp.item.config', JSON.parse(val));
+        this.set('tmp.configError', false);
+      } catch (e) {
+        console.log(e);
+        this.set('tmp.configError', true);
+      }
+    });
+
     this.clearSelection();
     this.modal({ template: tpl, close() {
+        config.cancel();
         return true;
       },
       data: {
@@ -58,8 +78,8 @@ export default function(r) {
     return false;
   });
 
-  r.on('runEntryNow', (ev, entry) => {
-    xhr.json.post(`${config.mount}/order/on/demand`, entry).then(o => {
+  r.on('runEntryNow', function(ev, entry) {
+    xhr.json.post(`${config.mount}/order/on/demand`, { entry }).then(o => {
       this.message('Entry scheduled to run on the next reload.');
     }, err => {
       this.message('Failed to schedule entry.', { title: 'Error', class: 'error' });
@@ -72,7 +92,7 @@ export default function(r) {
     xhr.json.post(`${config.mount}/entry`, { item }).then(i => {
       this.splice('entries', this.get('entries').indexOf(original), 1, i);
       this.unblock();
-    }, e => this.message(`Command saved failed:<br/>${e.message}`, { title: 'Error', class: 'error' }));
+    }, e => this.message(`Entry save failed:<br/>${e.message}`, { title: 'Error', class: 'error' }));
   });
 }
 

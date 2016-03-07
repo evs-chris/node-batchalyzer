@@ -5,6 +5,8 @@ import order from './parts/order';
 import entry from './parts/entry';
 import job from './parts/job';
 import resource from './parts/resource';
+import stat from './parts/stat';
+import statDef from './parts/statDefinition';
 
 Ractive.defaults.data.ensureArray = function(path) {
   if (path.indexOf('undefined') === 0) return;
@@ -18,7 +20,7 @@ Ractive.defaults.data.ensureArray = function(path) {
 
 var modals = [];
 
-var r = new Ractive({
+var r = window.r = new Ractive({
   el: 'main',
   template: '#tpl',
   data: {
@@ -35,10 +37,9 @@ var r = new Ractive({
       }
     },
     orderName(i) {
-      if (i.name) return i.name;
-      if (i.label) return i.label;
       if (i.entry) {
         let e = i.entry;
+        if (e.config && e.config.config && e.config.config.name) return e.config.config.name;
         if (e.config.name) return e.config.name;
         if (e.config.command) return e.config.command.name;
         if (e.job) {
@@ -53,6 +54,7 @@ var r = new Ractive({
       }
       if (i.config) {
         let c = i.config;
+        if (c.config && c.config.name) return c.config.name;
         if (c.name) return c.name;
         if (c.command) return c.command.name;
       }
@@ -62,6 +64,8 @@ var r = new Ractive({
           if (j.config.command) return j.config.command.name;
           if (j.config.cmd) return j.config.cmd;
       }
+      if (i.name) return i.name;
+      if (i.label) return i.label;
 
       return '<Unknown>';
     },
@@ -90,7 +94,24 @@ var r = new Ractive({
 
       return '<Unknown>';
     },
-    config
+    statName(stat) {
+      if (stat) {
+        if (stat.name) return stat.name;
+        if (stat.definitionId) {
+          let defs = this.get('statDefs');
+          if (defs) {
+            let def = _.find(defs, d => d.id === stat.definitionId);
+            if (def) return def.name;
+          }
+        }
+
+        return `<Stat ${stat.id}>`;
+      }
+
+      return '<Unknown>';
+    },
+    config,
+    graphPath, graphMin, graphMax, graphPoints
   },
   partials: {
     editorConfig: `<div id="editor-config" on-click="toggle('tmp.editorConfig')">&#9881;
@@ -154,7 +175,7 @@ var r = new Ractive({
       close() { return true; }
     });
   },
-  refresh, refreshAgents, refreshMessages, refreshRecentMessages, refreshResources, refreshSchedules, refreshStats, refreshStatDefs, refreshStatValues, refreshEntries, refreshJobs, refreshCommands
+  refresh, refreshAgents, refreshMessages, refreshRecentMessages, refreshResources, refreshSchedules, refreshStats, refreshStatValues, refreshEntries, refreshJobs, refreshCommands
 });
 
 function refreshAgents() { return xhr.json(`${config.mount}/agents`).then(as => {
@@ -167,12 +188,29 @@ function refreshMessages() { return xhr.json(`${config.mount}/messages`).then(ms
 function refreshRecentMessages() { return xhr.json(`${config.mount}/messages/recent`).then(ms => r.set('recentMessages', ms)); }
 function refreshResources() { return xhr.json(`${config.mount}/resources`).then(rs => r.set('resources', rs)); }
 function refreshSchedules() { return xhr.json(`${config.mount}/schedules`).then(ss => {
-  ss = _.sortBy(ss, s => s.target);
+  r.set('serverTime', ss.currentTime);
+  ss = _.sortBy(ss.schedules, s => s.target);
+  ss.forEach(s => {
+    let arr = _.filter(s.jobs, j => j.status < 0);
+    s.pendingJobs = arr.length;
+    arr = _.filter(s.jobs, j => j.status === 10);
+    s.runningJobs = arr.length;
+    arr = _.filter(s.jobs, j => j.status === 0);
+    s.successfulJobs = arr.length;
+    arr = _.filter(s.jobs, j => j.status > 0 && j.status < 10);
+    s.erroredJobs = arr.length;
+    arr = _.filter(s.jobs, j => j.status >= 0);
+    s.completeJobs = arr.length;
+  });
   r.set('schedules', ss);
 }); }
-function refreshStatDefs() { return xhr.json(`${config.mount}/stat/definitions`).then(ds => r.set('statDefs', ds)); }
 function refreshStatValues() { return xhr.json(`${config.mount}/stat/values`).then(ss => r.set('statValues', ss)); }
-function refreshStats() { return xhr.json(`${config.mount}/stats`).then(ss => r.set('stats', ss)); }
+function refreshStats() {
+  return Promise.all([
+    xhr.json(`${config.mount}/stats`).then(ss => r.set('stats', ss)),
+    xhr.json(`${config.mount}/stat/definitions`).then(ds => r.set('statDefs', ds))
+  ]);
+}
 function refreshEntries() { return xhr.json.post(`${config.mount}/entries`, {}).then(es => r.set('entries', es)); }
 function refreshJobs() { return xhr.json.post(`${config.mount}/jobs`, {}).then(js => r.set('jobs', js)); }
 function refreshCommands() { return xhr.json.post(`${config.mount}/commands`, {}).then(cs => r.set('commands', cs)); }
@@ -200,6 +238,8 @@ order(r);
 entry(r);
 job(r);
 resource(r);
+stat(r);
+statDef(r);
 
 function loadSchedulesTab(v) {
   if (v === 'entries' && !r.get('entries')) {
@@ -218,7 +258,7 @@ function loadStatsTab(v) {
     refreshStats();
   } else if (v === 'defs' && !r.get('statDefs')) {
     r.set('statDefs', []);
-    refreshStatDefs();
+    refreshStats();
   }
 }
 r.observe('settings.statsTab.tab', loadStatsTab);
@@ -509,5 +549,52 @@ r.components.Schedule = Ractive.extend({
 document.body.addEventListener('keydown', function(ev) {
   if (ev.keyCode === 77 && ev.ctrlKey) r.toggle('settings.expandMessages');
 });
+
+function graphPath(first, data, prop, width, height) {
+  let res = `M0 ${height} H${width}`;
+
+  let points = graphPoints(first, data, prop, width, height);
+
+  _.each(points, p => res += ` L${p.x} ${p.y}`);
+
+  return res + ' Z';
+}
+
+function graphPoints(first, data, prop, width, height, label) {
+  let res = [];
+
+  data = [].concat(first, data);
+  let start = _.clone(data);
+  if (prop) data = _.map(data, prop);
+
+  let xskip = width / (data.length - 1), count = 1;
+  if (xskip > width) xskip = width;
+
+  let min = _.min(data), max = _.max(data), mult = height / (max - min), off = min;
+  if (!_.isFinite(mult)) mult = 0;
+
+  if (min === max) {
+    _.each(data, (p, i) => res.push({ y: height / 2, x: width - (i * xskip), label: `${p}${label ? ' - ' + start[i][label] : ''}` }));
+  } else {
+
+    _.each(data, (p, i) => res.push({ y: height - (mult * (p - off)), x: width - (i * xskip), label: `${p}${label ? ' - ' + start[i][label] : ''}` }));
+  }
+
+  return res;
+}
+
+function graphMin(first, data, prop, label) {
+  data = [].concat(first, data);
+  if (prop) data = _.map(data, prop);
+
+  return `${Math.floor(_.min(data))}${label}`;
+}
+
+function graphMax(first, data, prop, label) {
+  data = [].concat(first, data);
+  if (prop) data = _.map(data, prop);
+
+  return `${Math.ceil(_.max(data))}${label}`;
+}
 
 export default r;

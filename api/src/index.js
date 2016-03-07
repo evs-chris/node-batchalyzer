@@ -6,7 +6,7 @@ const sendfile = require('koa-sendfile');
 const body = require('co-body');
 const path = require('path');
 
-const configPrefix = 'api';
+const configPrefix = 'batchalyzer.api';
 
 const log = (function() {
   let prefix = config.get('logPrefix', '');
@@ -148,7 +148,7 @@ module.exports = function(cfg) {
 
     // get active schedules with jobs
     app.use(route.get(`${mount}/schedules`, function*() {
-      this.body = stripGenerated(yield dao.activeSchedules({ allOrders: false }));
+      this.body = { currentTime: localDateString(), schedules: stripGenerated(yield dao.activeSchedules({ allOrders: false })) };
     }));
 
     // post condition to schedule
@@ -163,9 +163,9 @@ module.exports = function(cfg) {
     }));
 
     // upsert agent
-    app.use(route.post(`${mount}/agent`, function*() {
-      this.body = stripGenerated(yield dao.putAgent(this.posted));
-    }));
+    app.use(route.post(`${mount}/agent`, form(function*() {
+      this.body = stripGenerated(yield dao.putAgent(this.posted.item));
+    })));
 
     // get resources
     app.use(route.get(`${mount}/resources`, function*() {
@@ -173,9 +173,9 @@ module.exports = function(cfg) {
     }));
 
     // upsert resource
-    app.use(route.post(`${mount}/resource`, function*() {
-      this.body = stripGenerated(yield dao.putResource(this.posted));
-    }));
+    app.use(route.post(`${mount}/resource`, form(function*() {
+      this.body = stripGenerated(yield dao.putResource(this.posted.item));
+    })));
 
     // get entries
     app.use(route.post(`${mount}/entries`, form(function*() {
@@ -192,19 +192,14 @@ module.exports = function(cfg) {
           item.updatedAt = i.updatedAt;
         }
       }
+      item.deletedAt = null;
       this.body = yield dao.putEntry(item);
     })));
 
     app.use(route.del(`${mount}/entry/custom/:id`, function*(id) {
       const item = yield dao.findCustomEntry(id);
       if (!item) this.throw(404);
-      if (this.query.permanent === 'true') {
-        this.body = yield dao.dropEntry(item);
-      } else {
-        // unschedule the entry
-        item.schedule = {};
-        this.body = yield dao.putEntry(item);
-      }
+      this.body = yield dao.dropEntry(item);
     }));
 
     // get jobs
@@ -237,10 +232,20 @@ module.exports = function(cfg) {
       this.body = stripGenerated(yield dao.statDefinitions());
     }));
 
+    // save stat definition
+    app.use(route.post(`${mount}/stat/definition`, form(function*() {
+      this.body = stripGenerated(yield dao.putStatDefinition(this.posted.item));
+    })));
+
     // get stats
     app.use(route.get(`${mount}/stats`, function*() {
       this.body = stripGenerated(yield dao.stats());
     }));
+
+    // save stats
+    app.use(route.post(`${mount}/stat`, form(function*() {
+      this.body = stripGenerated(yield dao.putStat(this.posted.item));
+    })));
 
     // get orders for entry
     app.use(route.get(`${mount}/schedule/:schedule/orders/:entry`, function*(schedule, entry) {
@@ -254,7 +259,7 @@ module.exports = function(cfg) {
     app.use(route.post(`${mount}/order/on/demand`, form(function*() {
       const item = this.posted.entry;
       if (!item) this.throw(400);
-      this.body = stripGenerated(yield dao.putOrder({ entryId: item.id, onDemand: true }));
+      this.body = stripGenerated(yield dao.putOrder({ scheduleId: item.scheduleId, entryId: item.id, onDemand: true }));
     })));
 
     // get specific order
@@ -285,6 +290,10 @@ module.exports = function(cfg) {
       if (item.newVersion) {
         let info = yield dao.lastCommandVersion(item.name);
         item.version = info.version + 1;
+      }
+
+      if (!item.id && !item.version) {
+        item.version = 1;
       }
 
       this.body = yield dao.putCommand(item);
@@ -344,4 +353,17 @@ function form(opts, fn) {
 
 function isLocal(ctx) {
   return ctx.ip === '127.0.0.1' || ctx.ip === '::1';
+}
+
+function lpad(str, len, char = ' ') {
+  str = '' + str;
+  if (str.length >= len) return str;
+  return (new Array((len - str.length) + 1)).join(char) + str;
+}
+
+function localDateString(date = new Date()) {
+  let offset = date.getTimezoneOffset();
+  let hh = offset / 60, mm = offset % 60, sign = hh > 0 ? '+' : '-';
+  let tgt = new Date(+date + (offset * 60 * 1000 * -1));
+  return tgt.toISOString().replace('Z', `${sign}${lpad(Math.abs(hh), 2, '0')}${lpad(Math.abs(mm), 2, '0')}`);
 }

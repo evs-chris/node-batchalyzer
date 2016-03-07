@@ -9,8 +9,9 @@ export default function(r) {
       </div></div>
 
       {{#if ~/tmp.tab === 'details' || !~/tmp.tab}}
-        <div>
-          <textarea readonly style="width: 100%; height: 20em;">{{JSON.stringify(.config, null, '  ')}}</textarea>
+        <div class="flex primary">
+          <label>Config</label>
+          <textarea class="primary" twoway="false" on-change="newConfig:job">{{JSON.stringify(.config, null, '  ')}}</textarea>
         </div>
       {{/if}}
 
@@ -21,13 +22,18 @@ export default function(r) {
       {{/if}}
     </div>
   </div>
+  <div class="pre-buttons" />
+  <div class="buttons">
+    <button class="pure-button pure-button-primary" on-click="saveJob">Save</button>
+    <button class="pure-button pure-button-cancel" on-click="blockerClose">Close</button>
+  </div>
 {{/with}}</div>`;
 
   r.on('openJob', function(ev, item) {
     if (item && !item.id && typeof item !== 'object') {
       const jobs = this.get('jobs');
       if (!this.get('jobs')) {
-        this.refreshJobS().then(() => {
+        this.refreshJobs().then(() => {
           this.fire('openJob', {}, item);
         });
         return;
@@ -36,8 +42,22 @@ export default function(r) {
       }
     }
 
+    const config = this.on('newConfig', (ev, which) => {
+      if (which !== 'job') return;
+
+      let val = ev.original.target.value;
+      try {
+        this.set('tmp.item.config', JSON.parse(val));
+        this.set('tmp.configError', false);
+      } catch (e) {
+        console.log(e);
+        this.set('tmp.configError', true);
+      }
+    });
+
     this.clearSelection();
     this.modal({ template: tpl, close() {
+        config.cancel();
         return true;
       },
       data: {
@@ -47,5 +67,16 @@ export default function(r) {
     });
 
     return false;
+  });
+
+  r.on('saveJob', function(ev) {
+    let { item, original } = this.get('tmp');
+
+    xhr.json.post(`${config.mount}/job`, { item }).then(i => {
+      let idx = this.get('jobs').indexOf(original);
+      if (~idx) this.splice('jobs', idx, 1, i);
+      else this.unshift('jobs', i);
+      this.unblock();
+    }, e => this.message(`Job save failed:<br/>${e.message}`, { title: 'Error', class: 'error' }));
   });
 }

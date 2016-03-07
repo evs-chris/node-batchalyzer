@@ -22,7 +22,7 @@ export default function(r) {
                   <button class="pure-button pure-button-secondary" on-click="push('tmp.item.files', {})">Add File</button>
                 </div>
                 <div class="list striped">
-                  {{ensureArray(@keypath + '.files') ? '' : ''}}
+                  {{ensureArray('tmp.item.files') ? '' : ''}}
                   {{#each .files}}
                     <div>
                       <div class="primary file{{#if @index === ~/tmp.file}} selected{{/if}}" on-click="set('tmp.file', @index)">{{.name}}</div>
@@ -53,7 +53,7 @@ export default function(r) {
             </p>
             <button class="pure-button pure-button-secondary" on-click="push(@keypath + '.init', { args: [] })">Add Command</button>
             <div class="list striped">
-              {{ensureArray(@keypath + '.init') ? '' : ''}}
+              {{ensureArray('tmp.item.init') ? '' : ''}}
               {{#each .init}}
                 <div style="align-items: flex-end;">
                   <div>
@@ -68,7 +68,7 @@ export default function(r) {
                     Args
                     <button class="pure-button pure-button-secondary" on-click="push(@keypath + '.args', '')">Add</button>
                   </div>
-                  {{ensureArray(@keypath + '.args') ? '' : ''}}
+                  {{ensureArray('tmp.item.init.' + @index + '.args') ? '' : ''}}
                   {{#each .args}}
                     <div>
                       <label class="field"><div class="button-group"><button class="pure-button" on-click="moveUpList()" {{#if @index === 0}}disabled{{/if}}>&#8678;</button><button class="pure-button pure-button-cancel" on-click="removeFromList()">&#8855;</button><button class="pure-button" on-click="moveDownList()" {{#if @index + 1 === ../length}}disabled{{/if}}>&#8680;</button></div><input value="{{.}}" /></label>
@@ -115,6 +115,6 @@ export default function(r) {
         this.push('commands', i);
       }
       this.unblock();
-    }, e => this.message(`Command saved failed:<br/>${e.message}`, { title: 'Error', class: 'error' }));
+    }, e => this.message(`Command save failed:<br/>${e.message}`, { title: 'Error', class: 'error' }));
   });
 }
