@@ -21,7 +21,7 @@ export default function(r) {
   </div>
   <div class="pre-buttons" />
   <div class="buttons">
-    <button class="pure-button pure-button-cancel" on-click="blockerClose">Close</button>
+    <button class="pure-button pure-button-cancel" on-click="goBack">Close</button>
   </div>
 {{/with}}</div>`;
 

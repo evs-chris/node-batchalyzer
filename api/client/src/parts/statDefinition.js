@@ -23,7 +23,7 @@ export default function(r) {
   <div class="pre-buttons" />
   <div class="buttons">
     <button class="pure-button pure-button-primary" on-click="saveStatDef">Save</button>
-    <button class="pure-button pure-button-cancel" on-click="blockerClose">Cancel</button>
+    <button class="pure-button pure-button-cancel" on-click="goBack">Cancel</button>
   </div>
 {{/with}}</div>`;
 

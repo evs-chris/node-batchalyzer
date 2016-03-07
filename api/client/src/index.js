@@ -305,7 +305,7 @@ r.on('blockerClose', function(ev) {
 });
 
 document.addEventListener('keyup', ev => {
-  if (ev.keyCode === 27) history.back();
+  if (ev.keyCode === 27 && r.get('blocked')) history.back();
 });
 
 var locked = false;
