@@ -48,6 +48,7 @@ module.exports = function(cfg) {
   context.fetchJobCommands = !context.fetchCommands ? false : config.get(`${prefix}.fetchJobCommands`, true);
   context.maxStatTime = config.get(`${prefix}.maxStatSeconds`, 30);
   context.outputChunk = config.get(`${prefix}.outputChunkBytes`, 8192);
+  context.outputTimeout = config.get(`${prefix}.outputTimeoutSeconds`, 60);
   context.commandPath = config.get(`${prefix}.commandPath`, 'commands');
   context.halting = false;
 
@@ -291,7 +292,7 @@ module.exports = function(cfg) {
 
 function getStat(context, data) {
   let p, timeout;
-  log.stat.trace(`Got a stat request for ${data.type} ${data.cmd || 'builtin'}`);
+  log.stat.trace(`Got a stat request for ${data.type} ${(data.command || {}).name || data.cmd || 'builtin'}`);
 
   if (!context.runStats) return context.getFire()('stat', { id: data.id, type: data.type, error: 'Stats Not Supported' });
   if (!context[(data.type === 'fork' ? 'runForkStats' : data.type === 'shell' ? 'runShellStats' : 'runBuiltinStats')]) return context.getFire()('stat', { id: data.id, type: data.type, error: 'Stat Type Not Supported' });
@@ -314,7 +315,7 @@ function getStat(context, data) {
       context.pending.add();
       commandAvailable(context, data, true).then((cmd) => {
         try {
-          let args = [];
+          let args = [], ok = false;
           if (data.args) args = args.concat(data.args);
           p = child.fork(data.cmd, args, {
             cwd: cmd.path || data.path || os.tmpdir(),
@@ -324,14 +325,27 @@ function getStat(context, data) {
           });
 
           p.on('message', msg => {
-            log.stat.trace(`Stat ${data.type} ${data.cmd || 'builtin'} complete as ${msg.value}`);
+            try {
+              msg = JSON.parse(msg);
+            } catch (e) {
+              log.job.error(`Invalid message from process ${p.pid} stat ${data.id}`, e);
+              return;
+            }
+
+            log.stat.trace(`Stat ${data.type} ${(data.command || {}).name || data.cmd || 'builtin'} complete as ${msg.value}`);
             context.pending.done();
             context.getFire()('stat', { id: data.id, type: data.type, value: msg.value || 0, status: msg.status || '' });
+            ok = true;
             p.disconnect();
           });
           p.send(JSON.stringify({ type: 'config', config: data.config || {} }));
 
           p.on('exit', () => {
+            if (!ok) {
+              log.stat.error(`Command exited without response: ${p.pid} - ${p.exitCode}`);
+              context.getFire()('stat', { id: data.id, error: 'Command exited without response' });
+              context.pending.done();
+            }
             if (timeout) clearTimeout(timeout);
           });
 
@@ -438,8 +452,7 @@ function runJob(context, data) {
           // TODO: uid, gid
         });
 
-        chunkStream(p.stdout, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'output', output: chunk }));
-        chunkStream(p.stderr, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'error', output: chunk }));
+        watchOutput(context, p, data);
 
         p.on('error', e => {
           if (data.id) delete context.jobs[data.id];
@@ -538,8 +551,7 @@ function runJob(context, data) {
           context.getFire()('done', { id: data.id, result: 1, error: e.message });
         });
 
-        chunkStream(p.stdout, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'output', output: chunk }));
-        chunkStream(p.stderr, context.outputChunk, chunk => context.getFire()('output', { id: data.id, type: 'error', output: chunk }));
+        watchOutput(context, p, data);
 
         p.on('exit', (code, sig) => {
           log.job.trace(`Job done for ${data.type} ${data.cmd || '<unknown>'} result ${code}`);
@@ -562,8 +574,29 @@ function runJob(context, data) {
   }
 }
 
+function watchOutput(context, process, job) {
+  let nextOut, triggerOut, triggerErr;
+  let getFireOut = function getFireOut(type) {
+    return function(chunk) {
+      clearTimeout(nextOut);
+      if (chunk && chunk.length > 0) {
+        context.getFire()('output', { id: job.id, type, output: chunk });
+      }
+      if (!triggerOut.done && !triggerErr.done) {
+        nextOut = setTimeout(() => {
+          triggerOut();
+          triggerErr();
+        }, context.outputTimeout * 1000);
+      }
+    };
+  };
+
+  triggerOut = chunkStream(process.stdout, context.outputChunk, getFireOut('output'));
+  triggerErr = chunkStream(process.stderr, context.outputChunk, getFireOut('error'));
+}
+
 function chunkStream(stream, size, cb) {
-  let buffer = '';
+  let buffer = '', trigger;
   if (!stream) return;
   stream.setEncoding('utf8');
   function flushBuffer(last) {
@@ -584,9 +617,15 @@ function chunkStream(stream, size, cb) {
       cb(buffer);
       buffer = '';
     }
+
+    if (last) trigger.done = true;
   }
   stream.on('readable', flushBuffer);
   stream.on('end', () => flushBuffer(true));
+
+  trigger = function() { flushBuffer(); };
+
+  return trigger;
 }
 
 function loadCommand(context, cmd) {
