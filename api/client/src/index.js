@@ -159,6 +159,7 @@ var r = window.r = new Ractive({
     modals.unshift(opts);
     this.set('tmp', opts.data || {});
     this.block(opts);
+    history.pushState({ modal: true }, document.title);
   },
   message(message, opts = {}) {
     this.modal({
@@ -169,7 +170,7 @@ var r = window.r = new Ractive({
   </div>
   <div class="pre-buttons" />
   <div class="buttons">
-    <button class="pure-button pure-button-primary" on-click="blockerClose">OK</button>
+    <button class="pure-button pure-button-primary" on-click="goBack">OK</button>
   </div>
 </div>`,
       close() { return true; }
@@ -290,11 +291,39 @@ if (window.localStorage) {
   { init: false });
 }
 
+r.on('goBack', function(ev) {
+  history.back();
+});
 r.on('blockerClose', function(ev) {
   let fn = this.get('blockerClose');
-  if (typeof fn === 'function' && !fn.call(this)) return;
+  if (typeof fn === 'function' && !fn.call(this)) {
+    history.pushState({ modal: true }, document.title);
+    return;
+  }
 
   r.unblock();
+});
+
+document.addEventListener('keyup', ev => {
+  if (ev.keyCode === 27) history.back();
+});
+
+var locked = false;
+function pushState(n, o, kp) {
+  if (locked) return;
+  let state = {};
+  state[kp] = n;
+  history.pushState(state, document.title);
+}
+r.observe('settings.tab', pushState);
+r.observe('settings.*.tab', pushState);
+window.addEventListener('popstate', ev => {
+  locked = true;
+  if (!ev.state) return;
+  if (ev.state.modal) r.fire('blockerClose', ev);
+  else if (r.get('blocked')) r.fire('blockerClose', ev);
+  else r.set(ev.state);
+  locked = false;
 });
 
 // set up ace editor instance
